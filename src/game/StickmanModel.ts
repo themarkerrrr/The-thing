@@ -186,8 +186,10 @@ function loadSlicedLimbGeometries(): Promise<SlicedLimbGeometries> {
   }
   gltfLoadingPromise = new Promise((resolve, reject) => {
     const loader = new GLTFLoader();
+    const base = import.meta.env.BASE_URL?.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL || './'}/`;
+    const modelUrl = `${base}2003.glb`.replace(/\/\//g, '/');
     loader.load(
-      '/2003.glb',
+      modelUrl,
       (gltf) => {
         let foundGeometry: THREE.BufferGeometry | null = null;
         gltf.scene.traverse((child) => {

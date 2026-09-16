@@ -32,7 +32,13 @@ export const AvatarPreview3D: React.FC<AvatarPreview3DProps> = ({ color, name, c
     camera.lookAt(0, 0.95, 0);
 
     // Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+    } catch (err) {
+      console.warn('WebGL not supported for avatar preview:', err);
+      return;
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(width, height);
     renderer.shadowMap.enabled = true;

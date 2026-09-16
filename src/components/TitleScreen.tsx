@@ -20,33 +20,43 @@ const TitleCanvas = () => {
 
   useEffect(() => {
     const render = () => {
-      const ctx = canvasRef.current?.getContext('2d', { willReadFrequently: true });
-      if (!ctx) return;
-      const text = "stickgrounds !";
-      const fontSize = 32;
-      ctx.font = `900 ${fontSize}px "Comic Neue", cursive`;
-      const metrics = ctx.measureText(text);
-      const w = Math.ceil(metrics.width) + 16;
-      const h = fontSize + 20;
-      
-      canvasRef.current.width = w;
-      canvasRef.current.height = h;
+      try {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) return;
+        const text = "stickgrounds !";
+        const fontSize = 32;
+        ctx.font = `900 ${fontSize}px "Comic Neue", cursive`;
+        const metrics = ctx.measureText(text);
+        const w = Math.max(16, Math.ceil(metrics.width) + 16);
+        const h = Math.max(16, fontSize + 20);
+        
+        canvas.width = w;
+        canvas.height = h;
 
-      ctx.font = `900 ${fontSize}px "Comic Neue", cursive`;
-      ctx.textBaseline = 'top';
-      ctx.fillStyle = 'black';
-      ctx.fillText(text, 8, 10);
+        ctx.font = `900 ${fontSize}px "Comic Neue", cursive`;
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = 'black';
+        ctx.fillText(text, 8, 10);
 
-      // Hard thresholding alpha to create a pure 1-bit aliased (pixelated) edge
-      const imgData = ctx.getImageData(0, 0, w, h);
-      const data = imgData.data;
-      for (let i = 3; i < data.length; i += 4) {
-        data[i] = data[i] > 128 ? 255 : 0;
+        // Hard thresholding alpha to create a pure 1-bit aliased (pixelated) edge
+        if (w > 0 && h > 0) {
+          const imgData = ctx.getImageData(0, 0, w, h);
+          const data = imgData.data;
+          for (let i = 3; i < data.length; i += 4) {
+            data[i] = data[i] > 128 ? 255 : 0;
+          }
+          ctx.putImageData(imgData, 0, 0);
+        }
+      } catch (err) {
+        console.warn('TitleCanvas render safe fallback:', err);
       }
-      ctx.putImageData(imgData, 0, 0);
     };
 
-    document.fonts.ready.then(render);
+    if (typeof document !== 'undefined' && document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(render).catch(() => {});
+    }
     render();
   }, []);
 

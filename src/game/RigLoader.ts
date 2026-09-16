@@ -128,7 +128,13 @@ export async function loadModelFromFile(file: File, parts: StickmanMeshParts): P
 }
 
 export async function autoCheckDefaultCustomRig(parts: StickmanMeshParts): Promise<boolean> {
-  const candidates = ['/scene.usdz', '/scene.glb', '/model.usdz', '/model.glb'];
+  const base = import.meta.env.BASE_URL?.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL || './'}/`;
+  const candidates = [
+    `${base}scene.usdz`.replace(/\/\//g, '/'),
+    `${base}scene.glb`.replace(/\/\//g, '/'),
+    `${base}model.usdz`.replace(/\/\//g, '/'),
+    `${base}model.glb`.replace(/\/\//g, '/'),
+  ];
   for (const path of candidates) {
     try {
       const res = await fetch(path, { method: 'HEAD' });

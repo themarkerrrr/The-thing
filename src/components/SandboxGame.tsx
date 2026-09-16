@@ -331,6 +331,62 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
 
     const spawnPos = overridePos || ghostSnapPosRef.current;
     const rotRad = (buildRotationDegRef.current * Math.PI) / 180;
+
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      const scene = sceneRef.current;
+      if (scene) {
+        const objId = `local_obj_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        const s = buildScaleRef.current;
+        const type = selectedObjectTypeRef.current;
+        let baseSize: [number, number, number] = [1.5, 1.5, 1.5];
+        if (type === 'domino') baseSize = [0.35, 1.8, 0.9];
+        else if (type === 'sphere') baseSize = [0.9, 0.9, 0.9];
+        else if (type === 'barrel') baseSize = [0.75, 1.6, 0.75];
+        else if (type === 'dice') baseSize = [1.2, 1.2, 1.2];
+        else if (type === 'ramp') baseSize = [3.5, 1.8, 5.0];
+        else if (type === 'trampoline') baseSize = [3.2, 0.4, 3.2];
+
+        const scaledSize: [number, number, number] = [
+          baseSize[0] * s,
+          baseSize[1] * s,
+          baseSize[2] * s,
+        ];
+
+        const obj: PhysicsObject = {
+          id: objId,
+          type,
+          x: spawnPos[0],
+          y: spawnPos[1],
+          z: spawnPos[2],
+          qx: 0,
+          qy: Math.sin(rotRad / 2),
+          qz: 0,
+          qw: Math.cos(rotRad / 2),
+          vx: 0,
+          vy: 0,
+          vz: 0,
+          size: scaledSize,
+          color: '#b45309',
+          mass: autoAnchorRef.current ? 0 : 5,
+          restitution: type === 'trampoline' ? 0.9 : (type === 'sphere' ? 0.8 : 0.3),
+          isStatic: autoAnchorRef.current,
+        };
+
+        const mesh = createPhysicsObjectMesh(obj);
+        mesh.position.set(obj.x, obj.y, obj.z);
+        mesh.quaternion.set(obj.qx, obj.qy, obj.qz, obj.qw);
+        scene.add(mesh);
+        physicsObjectsRef.current.set(objId, {
+          mesh,
+          data: obj,
+          targetPos: new THREE.Vector3(obj.x, obj.y, obj.z),
+          targetQuat: new THREE.Quaternion(obj.qx, obj.qy, obj.qz, obj.qw),
+        });
+      }
+      sound.playPop();
+      return;
+    }
+
     sendWs({
       type: 'spawn_object',
       objectType: selectedObjectTypeRef.current,
@@ -348,6 +404,20 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
     const now = performance.now();
     if (now - lastActionTimeRef.current < 200) return;
     lastActionTimeRef.current = now;
+
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      const item = physicsObjectsRef.current.get(targetId);
+      if (item) {
+        item.data.isStatic = isStatic;
+        updateObjectAnchorVisual(item.mesh, isStatic);
+        if (isStatic) {
+          sound.playAnchor();
+        } else {
+          sound.playUnanchor();
+        }
+      }
+      return;
+    }
 
     sendWs({
       type: 'set_anchor',
@@ -368,6 +438,17 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
     if (now - lastActionTimeRef.current < 200) return;
     lastActionTimeRef.current = now;
 
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      const item = physicsObjectsRef.current.get(targetId);
+      if (item) {
+        const s = buildScaleRef.current;
+        item.mesh.scale.set(s, s, s);
+        item.data.size = [item.data.size[0] * s, item.data.size[1] * s, item.data.size[2] * s];
+        sound.playPop();
+      }
+      return;
+    }
+
     sendWs({
       type: 'scale_object',
       objectId: targetId,
@@ -382,6 +463,16 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
     const now = performance.now();
     if (now - lastActionTimeRef.current < 200) return;
     lastActionTimeRef.current = now;
+
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      const item = physicsObjectsRef.current.get(targetId);
+      if (item && sceneRef.current) {
+        sceneRef.current.remove(item.mesh);
+        physicsObjectsRef.current.delete(targetId);
+        sound.playPop();
+      }
+      return;
+    }
 
     sendWs({
       type: 'delete_object',
@@ -712,33 +803,170 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
     resizeObserver.observe(container);
 
     // WebSocket Connection to Room
+    const searchParams = new URLSearchParams(window.location.search);
+    const customServer = searchParams.get('server') || (import.meta.env.VITE_WS_URL as string | undefined);
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
+    const defaultWsUrl = `${protocol}//${window.location.host}/ws`;
+    const wsUrl = customServer || defaultWsUrl;
 
-    ws.onopen = () => {
-      sendWs({
-        type: 'join',
-        name: playerName,
-        color: playerColor,
-        roomId: roomId || 'public',
-        isPrivate: isPrivateRoom,
-      });
+    let isInitialized = false;
+
+    const setupOfflineFallback = () => {
+      if (isInitialized) return;
+      isInitialized = true;
+      selfIdRef.current = 'local_player';
+      callbacksRef.current.onRoomIdConfirmed(roomId || 'offline');
+      callbacksRef.current.onPlayerCountChange(1);
+      callbacksRef.current.onPingChange(0);
+      callbacksRef.current.onChatReceived(
+        'System',
+        'Offline Sandbox active. You can build, jump, & explore! (To connect multiplayer, pass ?server=wss://...)'
+      );
+
+      // Spawn starter props in local scene if empty
+      if (physicsObjectsRef.current.size === 0) {
+        const starterObjects: PhysicsObject[] = [
+          {
+            id: 'starter_trampoline',
+            type: 'trampoline',
+            x: 0,
+            y: 0.15,
+            z: 7,
+            qx: 0,
+            qy: 0,
+            qz: 0,
+            qw: 1,
+            vx: 0,
+            vy: 0,
+            vz: 0,
+            size: [3.2, 0.3, 3.2],
+            color: '#10b981',
+            mass: 0,
+            restitution: 0.9,
+            isStatic: true,
+          },
+          {
+            id: 'starter_ramp',
+            type: 'ramp',
+            x: -7,
+            y: 0.9,
+            z: 3,
+            qx: 0,
+            qy: 0,
+            qz: 0,
+            qw: 1,
+            vx: 0,
+            vy: 0,
+            vz: 0,
+            size: [3.5, 1.8, 5],
+            color: '#d97706',
+            mass: 0,
+            restitution: 0.2,
+            isStatic: true,
+          },
+          {
+            id: 'starter_crate',
+            type: 'box',
+            x: 5,
+            y: 0.75,
+            z: 2,
+            qx: 0,
+            qy: 0,
+            qz: 0,
+            qw: 1,
+            vx: 0,
+            vy: 0,
+            vz: 0,
+            size: [1.5, 1.5, 1.5],
+            color: '#b45309',
+            mass: 5,
+            restitution: 0.3,
+            isStatic: true,
+          },
+          {
+            id: 'starter_sphere',
+            type: 'sphere',
+            x: -4,
+            y: 0.9,
+            z: -4,
+            qx: 0,
+            qy: 0,
+            qz: 0,
+            qw: 1,
+            vx: 0,
+            vy: 0,
+            vz: 0,
+            size: [0.9, 0.9, 0.9],
+            color: '#ec4899',
+            mass: 3,
+            restitution: 0.8,
+            isStatic: true,
+          },
+        ];
+
+        for (const obj of starterObjects) {
+          const mesh = createPhysicsObjectMesh(obj);
+          mesh.position.set(obj.x, obj.y, obj.z);
+          scene.add(mesh);
+          physicsObjectsRef.current.set(obj.id, {
+            mesh,
+            data: obj,
+            targetPos: new THREE.Vector3(obj.x, obj.y, obj.z),
+            targetQuat: new THREE.Quaternion(obj.qx, obj.qy, obj.qz, obj.qw),
+          });
+        }
+      }
     };
+
+    // If on a purely static host like GitHub Pages or Neocities with no backend, fallback automatically
+    const connectionTimeout = setTimeout(() => {
+      if (!isInitialized) {
+        setupOfflineFallback();
+      }
+    }, 2800);
+
+    let ws: WebSocket | null = null;
+    try {
+      ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        clearTimeout(connectionTimeout);
+        sendWs({
+          type: 'join',
+          name: playerName,
+          color: playerColor,
+          roomId: roomId || 'public',
+          isPrivate: isPrivateRoom,
+        });
+      };
+
+      ws.onerror = () => {
+        setupOfflineFallback();
+      };
+
+      ws.onclose = () => {
+        setupOfflineFallback();
+      };
+    } catch {
+      setupOfflineFallback();
+    }
 
     // Ping loop
     const pingInterval = setInterval(() => {
       sendWs({ type: 'ping', t: performance.now() });
     }, 2500);
 
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data) as ServerMessage;
+    if (ws) {
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data) as ServerMessage;
 
-        if (msg.type === 'init') {
-          selfIdRef.current = msg.selfId;
-          callbacksRef.current.onRoomIdConfirmed(msg.roomId);
+          if (msg.type === 'init') {
+            isInitialized = true;
+            clearTimeout(connectionTimeout);
+            selfIdRef.current = msg.selfId;
+            callbacksRef.current.onRoomIdConfirmed(msg.roomId);
 
           // Spawn existing physics objects
           for (const obj of msg.objects) {
@@ -904,6 +1132,7 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
         console.error('Error processing WS packet:', err);
       }
     };
+  }
 
     // Keyboard handlers
     const handleKeyDown = (e: KeyboardEvent) => {
