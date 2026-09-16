@@ -6,6 +6,8 @@ import { AvatarPreview3D } from './AvatarPreview3D.tsx';
 interface TitleScreenProps {
   onJoin: (name: string, color: string, roomCode?: string, isCreate?: boolean) => void;
   deviceInfo: DeviceInfo;
+  initialName?: string;
+  initialColor?: string;
 }
 
 const COLORS = [
@@ -69,10 +71,10 @@ const TitleCanvas = () => {
   );
 };
 
-export const TitleScreen: React.FC<TitleScreenProps> = ({ onJoin, deviceInfo }) => {
-  const [name, setName] = useState('');
+export const TitleScreen: React.FC<TitleScreenProps> = ({ onJoin, deviceInfo, initialName = '', initialColor = '#808080' }) => {
+  const [name, setName] = useState(initialName);
   const [roomCode, setRoomCode] = useState('');
-  const [color, setColor] = useState('#808080');
+  const [color, setColor] = useState(initialColor);
   const [isCustomizeOpen, setIsCustomizeOpen] = useState(false);
 
   useEffect(() => {

@@ -409,7 +409,7 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
       const item = physicsObjectsRef.current.get(targetId);
       if (item) {
         item.data.isStatic = isStatic;
-        updateObjectAnchorVisual(item.mesh, isStatic);
+        updateObjectAnchorVisual(item.mesh, isStatic, item.data.size);
         if (isStatic) {
           sound.playAnchor();
         } else {

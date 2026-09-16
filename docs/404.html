@@ -15,33 +15,16 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Comic+Neue:ital,wght@0,400;0,700;1,700&family=Patrick+Hand&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
     <script>
-      // If served on GitHub Pages or static host from repository root,
-      // redirect immediately to /docs/ where the compiled bundle resides!
-      (function() {
-        var host = window.location.hostname;
-        var path = window.location.pathname;
-        if (host.includes('github.io') || host.includes('neocities.org') || host.includes('gitlab.io')) {
-          if (path.endsWith('/docs')) {
-            window.location.replace(path + '/' + window.location.search + window.location.hash);
-            return;
-          }
-          if (!path.includes('/docs/') && !path.includes('/dist/')) {
-            var target = path;
-            if (!target.endsWith('/')) target += '/';
-            window.location.replace(target + 'docs/' + window.location.search + window.location.hash);
-          }
-        }
-      })();
+      // Ensure trailing slash on directory URL so relative assets (./assets/...) always resolve accurately
+      if (!window.location.pathname.endsWith('/') && !window.location.pathname.split('/').pop().includes('.')) {
+        window.location.replace(window.location.pathname + '/' + window.location.search + window.location.hash);
+      }
     </script>
-    <script type="module" crossorigin src="./assets/index-BuGeVm94.js"></script>
+    <script type="module" crossorigin src="./assets/index-DgXfIkB2.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-q0_rfsPE.css">
   </head>
   <body style="margin:0;background-color:#171717;color:#ffffff;overflow:hidden;">
-    <div id="root">
-      <div style="display:flex;height:100vh;width:100vw;align-items:center;justify-content:center;background-color:#171717;color:#ffffff;font-family:sans-serif;font-size:16px;">
-        Loading stickgrounds...
-      </div>
-    </div>
+    <div id="root"></div>
   </body>
 </html>
 

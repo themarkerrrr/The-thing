@@ -14,6 +14,7 @@ interface HUDOverlayProps {
   roomId: string;
   playerCount: number;
   ping: number;
+  playerCoords?: { x: number; z: number };
   deviceInfo: DeviceInfo;
   onLeave: () => void;
   activeTool?: ActiveTool;
@@ -49,6 +50,7 @@ export const HUDOverlay: React.FC<HUDOverlayProps> = ({
   roomId,
   playerCount,
   ping,
+  playerCoords,
   deviceInfo,
   onLeave,
   activeTool = 'none',
