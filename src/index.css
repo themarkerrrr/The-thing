@@ -1,0 +1,102 @@
+@import "tailwindcss";
+
+/* Pixel scaling & Font utilities */
+.font-arial {
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+
+/* Old-style retro font and borders */
+.retro-box {
+  background-color: #1e2022;
+  border: 2px solid #000000;
+  box-shadow: inset 1px 1px 0px #4b5563, inset -1px -1px 0px #111827, 2px 2px 0px rgba(0, 0, 0, 0.4);
+  font-family: monospace, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas;
+}
+
+.retro-btn {
+  background-color: #2a2d32;
+  border: 2px solid #000000;
+  box-shadow: inset 1px 1px 0px #52525b, inset -1px -1px 0px #09090b;
+  color: #f4f4f5;
+  font-family: monospace, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas;
+  font-weight: bold;
+  transition: background-color 0.1s, transform 0.05s;
+}
+
+.retro-btn:hover {
+  background-color: #3f3f46;
+}
+
+.retro-btn:active {
+  box-shadow: inset -1px -1px 0px #52525b, inset 1px 1px 0px #09090b;
+  transform: translate(1px, 1px);
+}
+
+.retro-btn-accent {
+  background-color: #15803d;
+  border: 2px solid #000000;
+  box-shadow: inset 1px 1px 0px #4ade80, inset -1px -1px 0px #052e16;
+  color: #ffffff;
+  font-family: monospace, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas;
+  font-weight: bold;
+}
+
+.retro-btn-accent:hover {
+  background-color: #16a34a;
+}
+
+.retro-btn-accent:active {
+  box-shadow: inset -1px -1px 0px #4ade80, inset 1px 1px 0px #052e16;
+  transform: translate(1px, 1px);
+}
+
+.retro-btn-danger {
+  background-color: #b91c1c;
+  border: 2px solid #000000;
+  box-shadow: inset 1px 1px 0px #f87171, inset -1px -1px 0px #450a0a;
+  color: #ffffff;
+  font-family: monospace, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas;
+  font-weight: bold;
+}
+
+.retro-btn-danger:hover {
+  background-color: #dc2626;
+}
+
+/* Authentic Hand-Drawn Doodle Styles matching the menu sketch */
+.font-comic {
+  font-family: 'Comic Neue', 'Patrick Hand', cursive, sans-serif;
+}
+
+.font-doodle {
+  font-family: 'Patrick Hand', 'Comic Neue', cursive, sans-serif;
+}
+
+.doodle-shadow {
+  box-shadow: 6px 6px 0px #000000;
+}
+
+.doodle-shadow-sm {
+  box-shadow: 3.5px 3.5px 0px #000000;
+}
+
+.doodle-btn {
+  border: 3.5px solid #000000;
+  background-color: #ffffff;
+  color: #000000;
+  box-shadow: 6px 6px 0px #000000;
+  font-family: 'Comic Neue', 'Patrick Hand', cursive, sans-serif;
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+
+.doodle-btn:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 8px 8px 0px #000000;
+}
+
+.doodle-btn:active {
+  transform: translate(3px, 3px);
+  box-shadow: 2px 2px 0px #000000;
+}
+
