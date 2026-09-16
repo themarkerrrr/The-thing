@@ -32,8 +32,12 @@ class GameRoom {
   players = new Map<string, ConnectedPlayer>();
   objectCounter = 0;
   defaultMaterial: CANNON.Material;
+  woodMaterial: CANNON.Material;
   dominoMaterial: CANNON.Material;
-  bouncyMaterial: CANNON.Material;
+  rubberMaterial: CANNON.Material;
+  barrelMaterial: CANNON.Material;
+  diceMaterial: CANNON.Material;
+  trampolineMaterial: CANNON.Material;
   groundMaterial: CANNON.Material;
 
   constructor(id: string, isPrivate: boolean = false) {
@@ -41,46 +45,83 @@ class GameRoom {
     this.isPrivate = isPrivate;
 
     this.world = new CANNON.World();
-    this.world.gravity.set(0, -9.81, 0);
+    this.world.gravity.set(0, -9.82, 0);
     this.world.allowSleep = true;
+    this.world.broadphase = new CANNON.SAPBroadphase(this.world);
+
     if (this.world.solver instanceof CANNON.GSSolver) {
-      this.world.solver.iterations = 50;
+      this.world.solver.iterations = 30;
       this.world.solver.tolerance = 0.0001;
     }
 
+    this.world.defaultContactMaterial.contactEquationStiffness = 1e7;
+    this.world.defaultContactMaterial.contactEquationRelaxation = 3;
+    this.world.defaultContactMaterial.frictionEquationStiffness = 1e7;
+    this.world.defaultContactMaterial.frictionEquationRelaxation = 3;
+
     this.defaultMaterial = new CANNON.Material('default');
+    this.woodMaterial = new CANNON.Material('wood');
     this.dominoMaterial = new CANNON.Material('domino');
-    this.bouncyMaterial = new CANNON.Material('bouncy');
+    this.rubberMaterial = new CANNON.Material('rubber');
+    this.barrelMaterial = new CANNON.Material('barrel');
+    this.diceMaterial = new CANNON.Material('dice');
+    this.trampolineMaterial = new CANNON.Material('trampoline');
     this.groundMaterial = new CANNON.Material('ground');
 
-    const contactDefaultGround = new CANNON.ContactMaterial(this.defaultMaterial, this.groundMaterial, {
-      friction: 0.45,
-      restitution: 0.2,
-    });
-    const contactDominoGround = new CANNON.ContactMaterial(this.dominoMaterial, this.groundMaterial, {
-      friction: 0.75,
+    // Realistic Contact Material Pairings
+    // 1. Ground interactions
+    this.world.addContactMaterial(new CANNON.ContactMaterial(this.woodMaterial, this.groundMaterial, {
+      friction: 0.52,
+      restitution: 0.18,
+    }));
+    this.world.addContactMaterial(new CANNON.ContactMaterial(this.dominoMaterial, this.groundMaterial, {
+      friction: 0.76, // High friction so dominos stand firm and topple cleanly
       restitution: 0.05,
-    });
-    const contactDominoDomino = new CANNON.ContactMaterial(this.dominoMaterial, this.dominoMaterial, {
-      friction: 0.4,
-      restitution: 0.1,
-    });
-    const contactBouncyGround = new CANNON.ContactMaterial(this.bouncyMaterial, this.groundMaterial, {
-      friction: 0.35,
-      restitution: 0.85,
-    });
-    const contactDefaultDefault = new CANNON.ContactMaterial(this.defaultMaterial, this.defaultMaterial, {
-      friction: 0.4,
-      restitution: 0.25,
-    });
+    }));
+    this.world.addContactMaterial(new CANNON.ContactMaterial(this.rubberMaterial, this.groundMaterial, {
+      friction: 0.58,
+      restitution: 0.84, // Bouncy elastic spheres
+    }));
+    this.world.addContactMaterial(new CANNON.ContactMaterial(this.barrelMaterial, this.groundMaterial, {
+      friction: 0.46,
+      restitution: 0.22,
+    }));
+    this.world.addContactMaterial(new CANNON.ContactMaterial(this.diceMaterial, this.groundMaterial, {
+      friction: 0.54,
+      restitution: 0.35,
+    }));
+    this.world.addContactMaterial(new CANNON.ContactMaterial(this.trampolineMaterial, this.groundMaterial, {
+      friction: 0.70,
+      restitution: 1.65,
+    }));
 
-    this.world.addContactMaterial(contactDefaultGround);
-    this.world.addContactMaterial(contactDominoGround);
-    this.world.addContactMaterial(contactDominoDomino);
-    this.world.addContactMaterial(contactBouncyGround);
-    this.world.addContactMaterial(contactDefaultDefault);
+    // 2. Inter-object interactions
+    this.world.addContactMaterial(new CANNON.ContactMaterial(this.woodMaterial, this.woodMaterial, {
+      friction: 0.50,
+      restitution: 0.15,
+    }));
+    this.world.addContactMaterial(new CANNON.ContactMaterial(this.dominoMaterial, this.dominoMaterial, {
+      friction: 0.48,
+      restitution: 0.12,
+    }));
+    this.world.addContactMaterial(new CANNON.ContactMaterial(this.rubberMaterial, this.woodMaterial, {
+      friction: 0.52,
+      restitution: 0.75,
+    }));
+    this.world.addContactMaterial(new CANNON.ContactMaterial(this.barrelMaterial, this.woodMaterial, {
+      friction: 0.44,
+      restitution: 0.20,
+    }));
+    this.world.addContactMaterial(new CANNON.ContactMaterial(this.rubberMaterial, this.rubberMaterial, {
+      friction: 0.60,
+      restitution: 0.88,
+    }));
+    this.world.addContactMaterial(new CANNON.ContactMaterial(this.defaultMaterial, this.groundMaterial, {
+      friction: 0.50,
+      restitution: 0.20,
+    }));
 
-    // Ground
+    // Truly Infinite Ground plane (Cannon Plane extends to infinity)
     const groundBody = new CANNON.Body({
       type: CANNON.Body.STATIC,
       shape: new CANNON.Plane(),
@@ -89,24 +130,145 @@ class GameRoom {
     groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
     this.world.addBody(groundBody);
 
-    // Arena bounds
-    const wallThickness = 1;
-    const createWall = (x: number, z: number, width: number, depth: number) => {
-      const wall = new CANNON.Body({
-        type: CANNON.Body.STATIC,
-        shape: new CANNON.Box(new CANNON.Vec3(width / 2, WALL_HEIGHT / 2, depth / 2)),
-        position: new CANNON.Vec3(x, WALL_HEIGHT / 2, z),
-        material: this.defaultMaterial,
-      });
-      this.world.addBody(wall);
+    this.initDefaultSandbox();
+  }
+
+  getBaseMassForType(type: ObjectType, size: [number, number, number]): number {
+    if (type === 'domino') return Math.max(0.4, Math.round(size[0] * size[1] * size[2] * 2.4 * 10) / 10);
+    if (type === 'sphere') return Math.max(0.8, Math.round(Math.pow(size[0], 3) * 2.6 * 10) / 10);
+    if (type === 'barrel') return Math.max(2.0, Math.round(size[0] * size[0] * size[1] * 12.0 * 10) / 10);
+    if (type === 'dice') return Math.max(0.6, Math.round(size[0] * size[1] * size[2] * 1.0 * 10) / 10);
+    if (type === 'box') return Math.max(1.0, Math.round(size[0] * size[1] * size[2] * 2.8 * 10) / 10);
+    return 4.0;
+  }
+
+  setObjectAnchor(objectId: string, isStatic: boolean): InternalObject | null {
+    const item = this.objectsMap.get(objectId);
+    if (!item) return null;
+
+    item.meta.isStatic = isStatic;
+    if (isStatic) {
+      item.body.type = CANNON.Body.STATIC;
+      item.body.mass = 0;
+      item.body.collisionResponse = true;
+      item.body.velocity.set(0, 0, 0);
+      item.body.angularVelocity.set(0, 0, 0);
+      item.body.updateMassProperties();
+      item.body.updateAABB();
+      item.body.wakeUp();
+      item.meta.vx = 0;
+      item.meta.vy = 0;
+      item.meta.vz = 0;
+    } else {
+      const mass = this.getBaseMassForType(item.meta.type, item.meta.size);
+      item.body.type = CANNON.Body.DYNAMIC;
+      item.body.mass = mass;
+      item.body.collisionResponse = true;
+      item.body.updateMassProperties();
+      item.body.updateAABB();
+      item.body.wakeUp();
+    }
+
+    // Wake up all dynamic bodies so they immediately collide and settle against the newly anchored/unanchored body
+    for (const [, other] of this.objectsMap) {
+      if (!other.meta.isStatic) {
+        other.body.wakeUp();
+      }
+    }
+
+    return item;
+  }
+
+  scalePhysicsObject(objectId: string, targetScale?: number, explicitSize?: [number, number, number]): InternalObject | null {
+    const item = this.objectsMap.get(objectId);
+    if (!item) return null;
+
+    const baseSizes: Record<ObjectType, [number, number, number]> = {
+      box: [1.2, 1.2, 1.2],
+      sphere: [0.9, 0.9, 0.9],
+      barrel: [0.75, 1.5, 0.75],
+      domino: [1.0, 1.8, 0.25],
+      ramp: [3, 0.8, 3],
+      trampoline: [3, 0.4, 3],
+      dice: [1.3, 1.3, 1.3],
     };
 
-    createWall(0, ARENA_SIZE / 2, ARENA_SIZE, wallThickness);
-    createWall(0, -ARENA_SIZE / 2, ARENA_SIZE, wallThickness);
-    createWall(ARENA_SIZE / 2, 0, wallThickness, ARENA_SIZE);
-    createWall(-ARENA_SIZE / 2, 0, wallThickness, ARENA_SIZE);
+    const baseSize = baseSizes[item.meta.type] || [1, 1, 1];
+    let newSize: [number, number, number];
 
-    this.initDefaultSandbox();
+    if (explicitSize) {
+      newSize = [
+        Math.max(0.3, explicitSize[0]),
+        Math.max(0.3, explicitSize[1]),
+        Math.max(0.3, explicitSize[2]),
+      ];
+    } else if (typeof targetScale === 'number' && targetScale > 0) {
+      newSize = [
+        Math.round(baseSize[0] * targetScale * 100) / 100,
+        Math.round(baseSize[1] * targetScale * 100) / 100,
+        Math.round(baseSize[2] * targetScale * 100) / 100,
+      ];
+    } else {
+      // Cycle through scale presets: 0.5x, 1x, 1.5x, 2x, 3x, 4x
+      const currentScale = Math.round((item.meta.size[0] / baseSize[0]) * 10) / 10;
+      const presets = [0.5, 1.0, 1.5, 2.0, 3.0, 4.0];
+      let nextScale = presets[0];
+      for (let i = 0; i < presets.length; i++) {
+        if (presets[i] > currentScale + 0.1) {
+          nextScale = presets[i];
+          break;
+        }
+      }
+      newSize = [
+        Math.round(baseSize[0] * nextScale * 100) / 100,
+        Math.round(baseSize[1] * nextScale * 100) / 100,
+        Math.round(baseSize[2] * nextScale * 100) / 100,
+      ];
+    }
+
+    const prevPos = item.body.position.clone();
+    const prevQuat = item.body.quaternion.clone();
+    const prevVel = item.body.velocity.clone();
+    const prevAngVel = item.body.angularVelocity.clone();
+    const isStatic = Boolean(item.meta.isStatic || item.body.type === CANNON.Body.STATIC);
+
+    // Remove previous body
+    this.world.removeBody(item.body);
+
+    // Create fresh body with new size
+    const tempItem = this.createPhysicsBody(
+      item.meta.type,
+      [prevPos.x, prevPos.y, prevPos.z],
+      newSize,
+      item.meta.color,
+      item.meta.mass,
+      item.meta.restitution || 0.3,
+      isStatic,
+      0
+    );
+
+    // Unregister temp item ID and reuse original item body
+    this.world.removeBody(tempItem.body);
+    this.objectsMap.delete(tempItem.meta.id);
+
+    tempItem.body.position.copy(prevPos);
+    tempItem.body.quaternion.copy(prevQuat);
+    tempItem.body.velocity.copy(prevVel);
+    tempItem.body.angularVelocity.copy(prevAngVel);
+    this.world.addBody(tempItem.body);
+
+    item.body = tempItem.body;
+    item.meta.size = newSize;
+    item.meta.mass = tempItem.meta.mass;
+    item.body.wakeUp();
+
+    for (const [, other] of this.objectsMap) {
+      if (!other.meta.isStatic) {
+        other.body.wakeUp();
+      }
+    }
+
+    return item;
   }
 
   generateObjectId(): string {
@@ -124,29 +286,88 @@ class GameRoom {
     rotationY: number = 0
   ): InternalObject {
     const id = this.generateObjectId();
-    let shape: CANNON.Shape;
-    let mat = restitution > 0.6 ? this.bouncyMaterial : this.defaultMaterial;
+    let shape: CANNON.Shape | null = null;
+    let mat = this.defaultMaterial;
+    let linearDamping = 0.1;
+    let angularDamping = 0.2;
+
     if (type === 'domino') {
       mat = this.dominoMaterial;
-    }
-
-    if (type === 'sphere') {
-      shape = new CANNON.Sphere(size[0]);
-    } else if (type === 'barrel') {
-      shape = new CANNON.Cylinder(size[0], size[0], size[1], 16);
-    } else {
       shape = new CANNON.Box(new CANNON.Vec3(size[0] / 2, size[1] / 2, size[2] / 2));
+      linearDamping = 0.08;
+      angularDamping = 0.35;
+      mass = 1.2; // Lightweight domino tile (effortless to topple and cascade)
+    } else if (type === 'sphere') {
+      mat = this.rubberMaterial;
+      shape = new CANNON.Sphere(size[0]);
+      linearDamping = 0.02;
+      angularDamping = 0.08; // Natural rolling
+      // Scaled rubber sphere mass by volume (r=0.9 -> ~2.4kg, r=1.5 -> ~7.5kg)
+      mass = Math.max(1.8, Math.round(Math.pow(size[0], 3) * 2.6 * 10) / 10);
+    } else if (type === 'barrel') {
+      mat = this.barrelMaterial;
+      linearDamping = 0.05;
+      angularDamping = 0.15;
+      mass = 11.0; // Heavy industrial metal drum (high inertia and momentum)
+    } else if (type === 'dice') {
+      mat = this.diceMaterial;
+      shape = new CANNON.Box(new CANNON.Vec3(size[0] / 2, size[1] / 2, size[2] / 2));
+      linearDamping = 0.06;
+      angularDamping = 0.18;
+      mass = 2.2; // Compact wooden/plastic dice
+    } else if (type === 'ramp') {
+      mat = this.woodMaterial;
+      const hw = size[0] / 2, hh = size[1] / 2, hd = size[2] / 2;
+      const vertices = [
+        new CANNON.Vec3(-hw, -hh, -hd), // 0: bottom back left
+        new CANNON.Vec3( hw, -hh, -hd), // 1: bottom back right
+        new CANNON.Vec3(-hw, -hh,  hd), // 2: bottom front left
+        new CANNON.Vec3( hw, -hh,  hd), // 3: bottom front right
+        new CANNON.Vec3(-hw,  hh, -hd), // 4: top back left
+        new CANNON.Vec3( hw,  hh, -hd), // 5: top back right
+      ];
+      const faces = [
+        [0, 1, 3, 2], // bottom
+        [0, 4, 5, 1], // back
+        [2, 3, 5, 4], // slope
+        [0, 2, 4],    // left
+        [1, 5, 3],    // right
+      ];
+      shape = new CANNON.ConvexPolyhedron({ vertices, faces });
+      isStatic = true;
+      mass = 0;
+    } else if (type === 'trampoline') {
+      mat = this.trampolineMaterial;
+      shape = new CANNON.Box(new CANNON.Vec3(size[0] / 2, size[1] / 2, size[2] / 2));
+      isStatic = true;
+      mass = 0;
+    } else {
+      // Default Box (Crate)
+      mat = this.woodMaterial;
+      shape = new CANNON.Box(new CANNON.Vec3(size[0] / 2, size[1] / 2, size[2] / 2));
+      linearDamping = 0.10;
+      angularDamping = 0.22;
+      mass = 4.8; // Sturdy wooden cargo crate
     }
 
     const body = new CANNON.Body({
       mass: isStatic ? 0 : mass,
-      shape,
       material: mat,
       position: new CANNON.Vec3(pos[0], pos[1], pos[2]),
       type: isStatic ? CANNON.Body.STATIC : CANNON.Body.DYNAMIC,
-      linearDamping: type === 'sphere' ? 0.08 : 0.15,
-      angularDamping: type === 'sphere' ? 0.22 : 0.25,
+      linearDamping,
+      angularDamping,
     });
+
+    if (type === 'barrel') {
+      // Rotate Cannon cylinder shape 90 deg along X so its height aligns with Three.js Y axis
+      const cylinderShape = new CANNON.Cylinder(size[0], size[0], size[1], 16);
+      const quat = new CANNON.Quaternion();
+      quat.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), Math.PI / 2);
+      body.addShape(cylinderShape, new CANNON.Vec3(0, 0, 0), quat);
+    } else if (shape) {
+      body.addShape(shape);
+    }
 
     if (rotationY) {
       body.quaternion.setFromEuler(0, rotationY, 0);
@@ -179,54 +400,25 @@ class GameRoom {
     return item;
   }
 
+  removePhysicsObject(id: string): boolean {
+    const item = this.objectsMap.get(id);
+    if (!item) return false;
+    this.world.removeBody(item.body);
+    this.objectsMap.delete(id);
+    // Wake up remaining dynamic bodies so any blocks resting on the deleted block fall naturally
+    for (const [, other] of this.objectsMap) {
+      if (!other.meta.isStatic) {
+        other.body.wakeUp();
+      }
+    }
+    return true;
+  }
+
   initDefaultSandbox() {
     for (const [, item] of this.objectsMap) {
       this.world.removeBody(item.body);
     }
     this.objectsMap.clear();
-
-    // 1. Pyramid of Crates
-    const crateColors = ['#f59e0b', '#d97706', '#b45309', '#f97316', '#ea580c'];
-    const crateSize: [number, number, number] = [1.2, 1.2, 1.2];
-    const rows = 3;
-    let crateIdx = 0;
-    for (let row = 0; row < rows; row++) {
-      const count = rows - row;
-      const startX = -((count - 1) * 1.35) / 2;
-      const y = 0.6 + row * 1.25;
-      for (let i = 0; i < count; i++) {
-        const x = startX + i * 1.35;
-        const col = crateColors[crateIdx % crateColors.length];
-        crateIdx++;
-        this.createPhysicsBody('box', [x, y, -8], crateSize, col, 4);
-      }
-    }
-
-    // 2. Domino chain
-    const dominoColors = ['#ef4444', '#f43f5e', '#ec4899', '#d946ef', '#a855f7', '#8b5cf6', '#6366f1', '#3b82f6'];
-    const dominoSize: [number, number, number] = [1.0, 1.8, 0.25];
-    for (let i = 0; i < 8; i++) {
-      this.createPhysicsBody('domino', [7, 0.9, -4 + i * 1.4], dominoSize, dominoColors[i % dominoColors.length], 2);
-    }
-
-    // 3. Giant Bouncy Balls
-    this.createPhysicsBody('sphere', [-6, 1.2, -4], [1.2, 1.2, 1.2], '#10b981', 3, 0.85);
-    this.createPhysicsBody('sphere', [-8, 0.9, -6], [0.9, 0.9, 0.9], '#06b6d4', 2.5, 0.9);
-    this.createPhysicsBody('sphere', [-5, 1.5, -8], [1.5, 1.5, 1.5], '#8b5cf6', 6, 0.75);
-
-    // 4. Barrels
-    this.createPhysicsBody('barrel', [3, 1.0, 4], [0.8, 1.6, 0.8], '#dc2626', 8, 0.2);
-    this.createPhysicsBody('barrel', [-3, 1.0, 4], [0.8, 1.6, 0.8], '#f59e0b', 8, 0.2);
-
-    // 5. Dice
-    this.createPhysicsBody('dice', [0, 0.9, 6], [1.5, 1.5, 1.5], '#ffffff', 5, 0.4);
-
-    // 6. Trampoline
-    this.createPhysicsBody('trampoline', [0, 0.25, -2], [3.2, 0.5, 3.2], '#0ea5e9', 0, 1.5, true);
-
-    // 7. Ramps
-    this.createPhysicsBody('ramp', [-9, 0.5, 3], [3, 0.8, 3], '#64748b', 0, 0.1, true);
-    this.createPhysicsBody('ramp', [9, 0.5, 3], [3, 0.8, 3], '#64748b', 0, 0.1, true);
   }
 
   broadcast(msg: ServerMessage, excludeId?: string) {
@@ -240,15 +432,13 @@ class GameRoom {
   }
 
   step(dt: number) {
-    this.world.step(dt);
+    // Substepping at 60Hz fixed physics step for smooth, jitter-free simulation
+    this.world.step(1 / 60, dt, 4);
 
     for (const [, item] of this.objectsMap) {
-      if (
-        item.body.position.y < -10 ||
-        Math.abs(item.body.position.x) > ARENA_SIZE ||
-        Math.abs(item.body.position.z) > ARENA_SIZE
-      ) {
-        item.body.position.set(0, 5, -5);
+      // If an object falls into the abyss below y = -50, recover it to ground height
+      if (item.body.position.y < -50) {
+        item.body.position.set(item.body.position.x, 2, item.body.position.z);
         item.body.velocity.set(0, 0, 0);
         item.body.angularVelocity.set(0, 0, 0);
         item.body.quaternion.set(0, 0, 0, 1);
@@ -385,25 +575,35 @@ wss.on('connection', (ws) => {
         playerState.isGrounded = msg.isGrounded;
         playerState.lastUpdate = Date.now();
 
-        // Check interaction / push with objects in current room
-        const playerRadius = 0.55;
+        // Realistic player-to-object contact physics with torque & momentum transfer
+        const playerRadius = 0.50;
         for (const [, item] of currentRoom.objectsMap) {
           if (item.meta.isStatic) continue;
           const dx = item.body.position.x - playerState.x;
           const dz = item.body.position.z - playerState.z;
           const distSq = dx * dx + dz * dz;
-          const minDist = playerRadius + (item.meta.type === 'sphere' ? item.meta.size[0] : item.meta.size[0] / 2);
+          const objRadius = item.meta.type === 'sphere' ? item.meta.size[0] : Math.hypot(item.meta.size[0], item.meta.size[2]) * 0.45;
+          const minDist = playerRadius + objRadius;
 
-          if (distSq < minDist * minDist && Math.abs(item.body.position.y - playerState.y) < 2) {
+          if (distSq < minDist * minDist && Math.abs(item.body.position.y - playerState.y) < 2.2) {
             const dist = Math.sqrt(distSq) || 0.001;
             const nx = dx / dist;
             const nz = dz / dist;
-            const pushSpeed = Math.sqrt(playerState.vx * playerState.vx + playerState.vz * playerState.vz) || 2.5;
-            const pushForce = Math.min(pushSpeed * 0.4, 2.5);
+            const speed = Math.hypot(playerState.vx, playerState.vz) || 2.2;
+            const impulseMag = Math.min(speed * 2.2, 8.0);
+
+            // Contact point calculation for natural rotational torque (tipping over dominos, crates, barrels)
+            const contactY = Math.max(item.body.position.y - 0.5, Math.min(item.body.position.y + 0.7, playerState.y + 0.9));
+            const contactPos = new CANNON.Vec3(
+              item.body.position.x - nx * (objRadius * 0.6),
+              contactY,
+              item.body.position.z - nz * (objRadius * 0.6)
+            );
+
             item.body.wakeUp();
             item.body.applyImpulse(
-              new CANNON.Vec3(nx * pushForce, 0.2, nz * pushForce),
-              new CANNON.Vec3(item.body.position.x, item.body.position.y, item.body.position.z)
+              new CANNON.Vec3(nx * impulseMag, 0.4, nz * impulseMag),
+              contactPos
             );
           }
         }
@@ -417,9 +617,17 @@ wss.on('connection', (ws) => {
           trampoline: [3, 0.4, 3],
           dice: [1.3, 1.3, 1.3],
         };
-        const size = sizeMap[msg.objectType] || [1, 1, 1];
+        const base = sizeMap[msg.objectType] || [1, 1, 1];
+        const scale = typeof msg.scale === 'number' && msg.scale > 0 ? msg.scale : 1;
+        const size: [number, number, number] = msg.size || [
+          Math.round(base[0] * scale * 100) / 100,
+          Math.round(base[1] * scale * 100) / 100,
+          Math.round(base[2] * scale * 100) / 100,
+        ];
         const color = msg.color || '#38bdf8';
-        const isStatic = msg.objectType === 'ramp' || msg.objectType === 'trampoline';
+        const isStatic = typeof msg.isStatic === 'boolean'
+          ? msg.isStatic
+          : (msg.objectType === 'ramp' || msg.objectType === 'trampoline');
         const restitution = msg.objectType === 'trampoline' ? 1.5 : msg.objectType === 'sphere' ? 0.85 : 0.3;
 
         const newObj = currentRoom.createPhysicsBody(
@@ -437,6 +645,29 @@ wss.on('connection', (ws) => {
           type: 'object_spawned',
           object: newObj.meta,
         });
+      } else if (msg.type === 'set_anchor') {
+        const updated = currentRoom.setObjectAnchor(msg.objectId, msg.isStatic);
+        if (updated) {
+          currentRoom.broadcast({
+            type: 'object_updated',
+            object: updated.meta,
+          });
+        }
+      } else if (msg.type === 'scale_object') {
+        const updated = currentRoom.scalePhysicsObject(msg.objectId, msg.scale, msg.size);
+        if (updated) {
+          currentRoom.broadcast({
+            type: 'object_updated',
+            object: updated.meta,
+          });
+        }
+      } else if (msg.type === 'delete_object') {
+        if (currentRoom.removePhysicsObject(msg.objectId)) {
+          currentRoom.broadcast({
+            type: 'object_removed',
+            id: msg.objectId,
+          });
+        }
       } else if (msg.type === 'interact_object') {
         const item = currentRoom.objectsMap.get(msg.objectId);
         if (item && !item.meta.isStatic) {

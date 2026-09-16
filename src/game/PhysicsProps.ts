@@ -83,8 +83,16 @@ function createCrateCanvas(baseColorHex: string): HTMLCanvasElement {
 
 const diceTexture = new THREE.CanvasTexture(createDiceCanvas());
 
+export function updateObjectAnchorVisual(mesh: THREE.Object3D, _isStatic: boolean, _size: [number, number, number]): void {
+  const existing = mesh.getObjectByName('__anchorIndicator');
+  if (existing) {
+    mesh.remove(existing);
+  }
+}
+
 export function createPhysicsObjectMesh(obj: PhysicsObject): THREE.Object3D {
-  const { type, size, color } = obj;
+  const { type, size, color, isStatic } = obj;
+  let root: THREE.Object3D;
 
   if (type === 'sphere') {
     const radius = size[0];
@@ -98,10 +106,8 @@ export function createPhysicsObjectMesh(obj: PhysicsObject): THREE.Object3D {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    return mesh;
-  }
-
-  if (type === 'barrel') {
+    root = mesh;
+  } else if (type === 'barrel') {
     const radius = size[0];
     const height = size[1];
     const group = new THREE.Group();
@@ -117,7 +123,6 @@ export function createPhysicsObjectMesh(obj: PhysicsObject): THREE.Object3D {
     barrelMesh.receiveShadow = true;
     group.add(barrelMesh);
 
-    // Rib rings
     const ringMat = new THREE.MeshStandardMaterial({
       color: 0x1e293b,
       metalness: 0.8,
@@ -134,10 +139,8 @@ export function createPhysicsObjectMesh(obj: PhysicsObject): THREE.Object3D {
     ring2.position.y = -height * 0.25;
     group.add(ring2);
 
-    return group;
-  }
-
-  if (type === 'domino') {
+    root = group;
+  } else if (type === 'domino') {
     const [w, h, d] = size;
     const geo = new THREE.BoxGeometry(w, h, d);
     const mat = new THREE.MeshStandardMaterial({
@@ -148,10 +151,8 @@ export function createPhysicsObjectMesh(obj: PhysicsObject): THREE.Object3D {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    return mesh;
-  }
-
-  if (type === 'dice') {
+    root = mesh;
+  } else if (type === 'dice') {
     const [w, h, d] = size;
     const geo = new THREE.BoxGeometry(w, h, d);
     const mat = new THREE.MeshStandardMaterial({
@@ -162,14 +163,11 @@ export function createPhysicsObjectMesh(obj: PhysicsObject): THREE.Object3D {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    return mesh;
-  }
-
-  if (type === 'trampoline') {
+    root = mesh;
+  } else if (type === 'trampoline') {
     const [w, h, d] = size;
     const group = new THREE.Group();
 
-    // Base pad
     const baseGeo = new THREE.BoxGeometry(w, h * 0.7, d);
     const baseMat = new THREE.MeshStandardMaterial({
       color: 0x1e293b,
@@ -181,7 +179,6 @@ export function createPhysicsObjectMesh(obj: PhysicsObject): THREE.Object3D {
     baseMesh.receiveShadow = true;
     group.add(baseMesh);
 
-    // Glowing bouncy canvas pad on top
     const padGeo = new THREE.BoxGeometry(w * 0.86, h * 0.4, d * 0.86);
     const padMat = new THREE.MeshStandardMaterial({
       color: 0x0ea5e9,
@@ -193,12 +190,9 @@ export function createPhysicsObjectMesh(obj: PhysicsObject): THREE.Object3D {
     padMesh.position.y = h * 0.22;
     group.add(padMesh);
 
-    return group;
-  }
-
-  if (type === 'ramp') {
+    root = group;
+  } else if (type === 'ramp') {
     const [w, h, d] = size;
-    // Wedge/ramp shape
     const shape = new THREE.Shape();
     shape.moveTo(-d / 2, 0);
     shape.lineTo(d / 2, 0);
@@ -225,20 +219,22 @@ export function createPhysicsObjectMesh(obj: PhysicsObject): THREE.Object3D {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    return mesh;
+    root = mesh;
+  } else {
+    // Default Box (Crate)
+    const [w, h, d] = size;
+    const geo = new THREE.BoxGeometry(w, h, d);
+    const tex = new THREE.CanvasTexture(createCrateCanvas(color));
+    const mat = new THREE.MeshStandardMaterial({
+      map: tex,
+      roughness: 0.4,
+      metalness: 0.1,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    root = mesh;
   }
 
-  // Default Box (Crate)
-  const [w, h, d] = size;
-  const geo = new THREE.BoxGeometry(w, h, d);
-  const tex = new THREE.CanvasTexture(createCrateCanvas(color));
-  const mat = new THREE.MeshStandardMaterial({
-    map: tex,
-    roughness: 0.4,
-    metalness: 0.1,
-  });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  return mesh;
+  return root;
 }

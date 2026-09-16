@@ -8,7 +8,7 @@ import { TitleScreen } from './components/TitleScreen.tsx';
 import { SandboxGame } from './components/SandboxGame.tsx';
 import { HUDOverlay } from './components/HUDOverlay.tsx';
 import { useDeviceDetection } from './hooks/useDeviceDetection.ts';
-import type { ObjectType, PlayerState } from './types.ts';
+import type { ActiveTool, ObjectType, PlayerState } from './types.ts';
 
 interface ChatMessage {
   sender: string;
@@ -30,11 +30,14 @@ export default function App() {
   // In-Game status
   const [playerCount, setPlayerCount] = useState(1);
   const [ping, setPing] = useState(12);
+  const [playerCoords, setPlayerCoords] = useState<{ x: number; z: number }>({ x: 0, z: 0 });
 
-  // BABFT Build Tool State
-  const [isBuildMode, setIsBuildMode] = useState(false);
+  // Active Tool State (Build, Anchor, Unanchor, Scale, Delete, None)
+  const [activeTool, setActiveTool] = useState<ActiveTool>('none');
   const [selectedObjectType, setSelectedObjectType] = useState<ObjectType>('box');
   const [buildRotationDeg, setBuildRotationDeg] = useState(0);
+  const [autoAnchor, setAutoAnchor] = useState<boolean>(true); // Default true so all newly placed parts are anchored upon placed
+  const [buildScale, setBuildScale] = useState<number>(1); // Scale multiplier: 0.5, 0.75, 1, 1.5, 2, 3, 4
 
   // Actions & Emotes
   const [activeEmote, setActiveEmote] = useState<PlayerState['anim'] | null>(null);
@@ -43,7 +46,7 @@ export default function App() {
     {
       id: 'welcome',
       sender: 'System',
-      text: 'stickgrounds connected. Move with WASD, jump with Space, kick with E.',
+      text: 'stickgrounds connected. Auto-Anchor is ON. Use Scale & Anchor tools to customize blocks.',
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
@@ -53,12 +56,12 @@ export default function App() {
     setPlayerColor(color);
     setRoomId(room);
     setIsPrivateRoom(isPrivate);
-    setIsBuildMode(false);
+    setActiveTool('none');
     setInGame(true);
   }, []);
 
   const handleLeaveGame = useCallback(() => {
-    setIsBuildMode(false);
+    setActiveTool('none');
     setInGame(false);
   }, []);
 
@@ -66,12 +69,28 @@ export default function App() {
     setActiveEmote(emote);
   }, []);
 
+  const handleSelectTool = useCallback((tool: ActiveTool) => {
+    setActiveTool((prev) => (prev === tool ? 'none' : tool));
+  }, []);
+
   const handleToggleBuildMode = useCallback(() => {
-    setIsBuildMode((prev) => !prev);
+    setActiveTool((prev) => (prev === 'build' ? 'none' : 'build'));
+  }, []);
+
+  const handleToggleAutoAnchor = useCallback(() => {
+    setAutoAnchor((prev) => !prev);
+  }, []);
+
+  const handleSetBuildScale = useCallback((scale: number) => {
+    setBuildScale(scale);
   }, []);
 
   const handleRotateBuild = useCallback(() => {
     setBuildRotationDeg((prev) => (prev + 90) % 360);
+  }, []);
+
+  const handlePlayerCoordsChange = useCallback((x: number, z: number) => {
+    setPlayerCoords({ x, z });
   }, []);
 
   const handleSendChat = useCallback((text: string) => {
@@ -89,6 +108,8 @@ export default function App() {
       },
     ]);
   }, []);
+
+  const isBuildMode = activeTool === 'build';
 
   return (
     <main className="relative h-screen w-screen overflow-hidden bg-neutral-900 select-none">
@@ -111,13 +132,18 @@ export default function App() {
             onRoomIdConfirmed={setRoomId}
             onPlayerCountChange={setPlayerCount}
             onPingChange={setPing}
+            onPlayerCoordsChange={handlePlayerCoordsChange}
             activeEmote={activeEmote}
             onEmoteConsumed={() => setActiveEmote(null)}
+            activeTool={activeTool}
+            onSelectTool={handleSelectTool}
             isBuildMode={isBuildMode}
             selectedObjectType={selectedObjectType}
             buildRotationDeg={buildRotationDeg}
             onRotateBuild={handleRotateBuild}
             onToggleBuildMode={handleToggleBuildMode}
+            autoAnchor={autoAnchor}
+            buildScale={buildScale}
             chatMessageToSend={chatMessageToSend}
             onChatConsumed={() => setChatMessageToSend(null)}
             onChatReceived={handleChatReceived}
@@ -128,14 +154,21 @@ export default function App() {
             roomId={roomId}
             playerCount={playerCount}
             ping={ping}
+            playerCoords={playerCoords}
             deviceInfo={deviceInfo}
             onLeave={handleLeaveGame}
+            activeTool={activeTool}
+            onSelectTool={handleSelectTool}
             isBuildMode={isBuildMode}
             selectedObjectType={selectedObjectType}
             onSelectObjectType={setSelectedObjectType}
             onToggleBuildMode={handleToggleBuildMode}
             buildRotationDeg={buildRotationDeg}
             onRotateBuild={handleRotateBuild}
+            autoAnchor={autoAnchor}
+            onToggleAutoAnchor={handleToggleAutoAnchor}
+            buildScale={buildScale}
+            onSetBuildScale={handleSetBuildScale}
             onTriggerEmote={handleTriggerEmote}
             chatMessages={chatMessages}
             onSendChat={handleSendChat}

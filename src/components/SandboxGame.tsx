@@ -6,10 +6,12 @@ import {
   animateStickman,
   updateNameTag,
   updateChatBubble,
+  updateStickmanColor,
 } from '../game/StickmanModel.ts';
-import { createPhysicsObjectMesh } from '../game/PhysicsProps.ts';
+import { createPhysicsObjectMesh, updateObjectAnchorVisual } from '../game/PhysicsProps.ts';
 import { sound } from '../game/SoundEffects.ts';
 import type {
+  ActiveTool,
   ClientMessage,
   ObjectType,
   PhysicsObject,
@@ -27,34 +29,40 @@ interface SandboxGameProps {
   onRoomIdConfirmed: (id: string) => void;
   onPlayerCountChange: (count: number) => void;
   onPingChange: (ping: number) => void;
+  onPlayerCoordsChange?: (x: number, z: number) => void;
   activeEmote: PlayerState['anim'] | null;
   onEmoteConsumed: () => void;
+  activeTool?: ActiveTool;
+  onSelectTool?: (tool: ActiveTool) => void;
   isBuildMode: boolean;
   selectedObjectType: ObjectType;
   buildRotationDeg: number;
   onRotateBuild: () => void;
   onToggleBuildMode: () => void;
+  autoAnchor?: boolean;
+  buildScale?: number;
   chatMessageToSend: string | null;
   onChatConsumed: () => void;
   onChatReceived: (sender: string, text: string) => void;
 }
 
-function getObjectDimensions(type: ObjectType): { size: [number, number, number]; halfHeight: number } {
+function getObjectDimensions(type: ObjectType, scale: number = 1): { size: [number, number, number]; halfHeight: number } {
+  const s = Math.max(0.2, scale);
   switch (type) {
     case 'box':
-      return { size: [1.2, 1.2, 1.2], halfHeight: 0.6 };
+      return { size: [1.2 * s, 1.2 * s, 1.2 * s], halfHeight: 0.6 * s };
     case 'sphere':
-      return { size: [0.9, 0.9, 0.9], halfHeight: 0.45 };
+      return { size: [0.9 * s, 0.9 * s, 0.9 * s], halfHeight: 0.45 * s };
     case 'barrel':
-      return { size: [0.75, 1.5, 0.75], halfHeight: 0.75 };
+      return { size: [0.75 * s, 1.5 * s, 0.75 * s], halfHeight: 0.75 * s };
     case 'domino':
-      return { size: [1.0, 1.8, 0.25], halfHeight: 0.9 };
+      return { size: [1.0 * s, 1.8 * s, 0.25 * s], halfHeight: 0.9 * s };
     case 'ramp':
-      return { size: [3, 0.8, 3], halfHeight: 0.4 };
+      return { size: [3 * s, 0.8 * s, 3 * s], halfHeight: 0.4 * s };
     case 'trampoline':
-      return { size: [3, 0.4, 3], halfHeight: 0.2 };
+      return { size: [3 * s, 0.4 * s, 3 * s], halfHeight: 0.2 * s };
     case 'dice':
-      return { size: [1.3, 1.3, 1.3], halfHeight: 0.65 };
+      return { size: [1.3 * s, 1.3 * s, 1.3 * s], halfHeight: 0.65 * s };
   }
 }
 
@@ -67,13 +75,18 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
   onRoomIdConfirmed,
   onPlayerCountChange,
   onPingChange,
+  onPlayerCoordsChange,
   activeEmote,
   onEmoteConsumed,
+  activeTool = 'none',
+  onSelectTool,
   isBuildMode,
   selectedObjectType,
   buildRotationDeg,
   onRotateBuild,
   onToggleBuildMode,
+  autoAnchor = true,
+  buildScale = 1,
   chatMessageToSend,
   onChatConsumed,
   onChatReceived,
@@ -121,10 +134,17 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
 
   // Ground plane ref for raycasting
   const groundMeshRef = useRef<THREE.Mesh | null>(null);
+  const dirLightRef = useRef<THREE.DirectionalLight | null>(null);
+  const fillLightRef = useRef<THREE.DirectionalLight | null>(null);
 
   // BABFT Ghost Preview Mesh Ref
   const ghostMeshRef = useRef<THREE.Group | null>(null);
   const ghostSnapPosRef = useRef<[number, number, number]>([0, 0.6, 0]);
+
+  // Target Reticle for Anchor / Unanchor tool selection
+  const targetReticleRef = useRef<THREE.LineSegments | null>(null);
+  const targetReticleMatRef = useRef<THREE.LineBasicMaterial | null>(null);
+  const hoveredObjectIdRef = useRef<string | null>(null);
 
   // Input states
   const keysRef = useRef<{ [key: string]: boolean }>({});
@@ -142,7 +162,7 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
   const lastMousePosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const mouseDownStartPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  // Raycaster & Mouse for BABFT building
+  // Raycaster & Mouse for building and anchoring
   const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
   const mouseCoordsRef = useRef<THREE.Vector2>(new THREE.Vector2(0, 0));
 
@@ -158,8 +178,143 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
     }
   }, []);
 
+  // Dynamic state refs to prevent WebGL scene teardown when equipping items or toggling modes
+  const activeToolRef = useRef<ActiveTool>(activeTool);
+  activeToolRef.current = activeTool || (isBuildMode ? 'build' : 'none');
+
+  const isBuildModeRef = useRef(isBuildMode);
+  isBuildModeRef.current = isBuildMode;
+
+  const selectedObjectTypeRef = useRef(selectedObjectType);
+  selectedObjectTypeRef.current = selectedObjectType;
+
+  const buildRotationDegRef = useRef(buildRotationDeg);
+  buildRotationDegRef.current = buildRotationDeg;
+
+  const autoAnchorRef = useRef(autoAnchor);
+  autoAnchorRef.current = autoAnchor;
+
+  const buildScaleRef = useRef(buildScale);
+  buildScaleRef.current = buildScale;
+
+  const playerNameRef = useRef(playerName);
+  playerNameRef.current = playerName;
+
+  const playerColorRef = useRef(playerColor);
+  playerColorRef.current = playerColor;
+
+  const callbacksRef = useRef({
+    onChatReceived,
+    onPingChange,
+    onPlayerCountChange,
+    onRoomIdConfirmed,
+    onRotateBuild,
+    onToggleBuildMode,
+    onSelectTool,
+    onPlayerCoordsChange,
+  });
+  callbacksRef.current = {
+    onChatReceived,
+    onPingChange,
+    onPlayerCountChange,
+    onRoomIdConfirmed,
+    onRotateBuild,
+    onToggleBuildMode,
+    onSelectTool,
+    onPlayerCoordsChange,
+  };
+
   // Place block in BABFT build mode (used by mouse click or touch button/tap)
-  
+  const lastActionTimeRef = useRef<number>(0);
+  const lastTouchEndTimeRef = useRef<number>(0);
+
+  const calculatePlacementPosition = useCallback((screenX: number, screenY: number): [number, number, number] | null => {
+    if (!rendererRef.current || !cameraRef.current) return null;
+    const rect = rendererRef.current.domElement.getBoundingClientRect();
+    const ndcX = ((screenX - rect.left) / rect.width) * 2 - 1;
+    const ndcY = -((screenY - rect.top) / rect.height) * 2 + 1;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), cameraRef.current);
+
+    const targets: THREE.Object3D[] = [];
+    if (groundMeshRef.current) targets.push(groundMeshRef.current);
+    for (const [, item] of physicsObjectsRef.current) {
+      targets.push(item.mesh);
+    }
+
+    const intersects = raycaster.intersectObjects(targets, true);
+    const { halfHeight } = getObjectDimensions(selectedObjectTypeRef.current, buildScaleRef.current);
+
+    if (intersects.length > 0) {
+      const hit = intersects[0];
+      const pt = hit.point;
+
+      // Grid snap (1 unit grid for smooth ground alignment)
+      const grid = 1.0;
+      let snapX = Math.round(pt.x / grid) * grid;
+      let snapZ = Math.round(pt.z / grid) * grid;
+      let snapY = halfHeight;
+
+      // If hitting another physics object, snap onto its top or side surface
+      if (hit.object !== groundMeshRef.current && hit.point.y > 0.05) {
+        const normal = hit.face ? hit.face.normal.clone() : new THREE.Vector3(0, 1, 0);
+        normal.transformDirection(hit.object.matrixWorld);
+
+        if (normal.y > 0.4) {
+          // Top face
+          snapX = Math.round(pt.x / 0.5) * 0.5;
+          snapZ = Math.round(pt.z / 0.5) * 0.5;
+          snapY = pt.y + halfHeight;
+        } else {
+          // Side face
+          snapX = Math.round((pt.x + normal.x * 0.5) / 0.5) * 0.5;
+          snapZ = Math.round((pt.z + normal.z * 0.5) / 0.5) * 0.5;
+          snapY = Math.max(halfHeight, Math.round(pt.y / 0.5) * 0.5);
+        }
+      }
+      return [snapX, snapY, snapZ];
+    }
+
+    // Fallback: ray-plane intersection with ground plane (y = 0)
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const planeTarget = new THREE.Vector3();
+    if (raycaster.ray.intersectPlane(plane, planeTarget)) {
+      const snapX = Math.round(planeTarget.x / 1.0) * 1.0;
+      const snapZ = Math.round(planeTarget.z / 1.0) * 1.0;
+      return [snapX, halfHeight, snapZ];
+    }
+
+    return null;
+  }, []);
+
+  const findObjectAtScreenCoords = useCallback((screenX: number, screenY: number): string | null => {
+    if (!rendererRef.current || !cameraRef.current) return null;
+    const rect = rendererRef.current.domElement.getBoundingClientRect();
+    const ndcX = ((screenX - rect.left) / rect.width) * 2 - 1;
+    const ndcY = -((screenY - rect.top) / rect.height) * 2 + 1;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), cameraRef.current);
+
+    const targets: THREE.Object3D[] = [];
+    const objMap = new Map<THREE.Object3D, string>();
+    for (const [id, item] of physicsObjectsRef.current) {
+      targets.push(item.mesh);
+      objMap.set(item.mesh, id);
+    }
+
+    const intersects = raycaster.intersectObjects(targets, true);
+    if (intersects.length > 0) {
+      let topMesh: THREE.Object3D | null = intersects[0].object;
+      while (topMesh && !objMap.has(topMesh) && topMesh.parent) {
+        topMesh = topMesh.parent;
+      }
+      return topMesh ? (objMap.get(topMesh) || null) : null;
+    }
+    return null;
+  }, []);
+
   const handleZoomIn = useCallback(() => {
     cameraAngleRef.current.distance = Math.max(5, cameraAngleRef.current.distance - 2);
   }, []);
@@ -168,19 +323,74 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
     cameraAngleRef.current.distance = Math.min(32, cameraAngleRef.current.distance + 2);
   }, []);
 
-  const handlePlaceBlock = useCallback(() => {
-    if (!isBuildMode) return;
-    const rotRad = (buildRotationDeg * Math.PI) / 180;
+  const handlePlaceBlock = useCallback((overridePos?: [number, number, number]) => {
+    if (activeToolRef.current !== 'build' && !isBuildModeRef.current) return;
+    const now = performance.now();
+    if (now - lastActionTimeRef.current < 200) return;
+    lastActionTimeRef.current = now;
+
+    const spawnPos = overridePos || ghostSnapPosRef.current;
+    const rotRad = (buildRotationDegRef.current * Math.PI) / 180;
     sendWs({
       type: 'spawn_object',
-      objectType: selectedObjectType,
-      position: ghostSnapPosRef.current,
+      objectType: selectedObjectTypeRef.current,
+      position: spawnPos,
       rotationY: rotRad,
+      isStatic: autoAnchorRef.current,
+      scale: buildScaleRef.current,
     });
     sound.playPop();
-  }, [buildRotationDeg, isBuildMode, selectedObjectType, sendWs]);
+  }, [sendWs]);
 
-  // Handle local Kick / Interact
+  const handleAnchorAction = useCallback((isStatic: boolean, overrideObjectId?: string) => {
+    const targetId = overrideObjectId || hoveredObjectIdRef.current;
+    if (!targetId) return;
+    const now = performance.now();
+    if (now - lastActionTimeRef.current < 200) return;
+    lastActionTimeRef.current = now;
+
+    sendWs({
+      type: 'set_anchor',
+      objectId: targetId,
+      isStatic,
+    });
+    if (isStatic) {
+      sound.playAnchor();
+    } else {
+      sound.playUnanchor();
+    }
+  }, [sendWs]);
+
+  const handleScaleAction = useCallback((overrideObjectId?: string) => {
+    const targetId = overrideObjectId || hoveredObjectIdRef.current;
+    if (!targetId) return;
+    const now = performance.now();
+    if (now - lastActionTimeRef.current < 200) return;
+    lastActionTimeRef.current = now;
+
+    sendWs({
+      type: 'scale_object',
+      objectId: targetId,
+      scale: buildScaleRef.current,
+    });
+    sound.playPop();
+  }, [sendWs]);
+
+  const handleDeleteAction = useCallback((overrideObjectId?: string) => {
+    const targetId = overrideObjectId || hoveredObjectIdRef.current;
+    if (!targetId) return;
+    const now = performance.now();
+    if (now - lastActionTimeRef.current < 200) return;
+    lastActionTimeRef.current = now;
+
+    sendWs({
+      type: 'delete_object',
+      objectId: targetId,
+    });
+    sound.playPop();
+  }, [sendWs]);
+
+  // Handle local Kick / Interact with realistic impulse and torque
   const triggerKick = useCallback(() => {
     const now = Date.now();
     if (now - kickCooldownRef.current < 400) return;
@@ -191,8 +401,8 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
 
     // Kick physics objects directly in front
     const p = localPlayerStateRef.current;
-    const kickFwdX = -Math.sin(p.rotY);
-    const kickFwdZ = -Math.cos(p.rotY);
+    const kickFwdX = Math.sin(p.rotY);
+    const kickFwdZ = Math.cos(p.rotY);
 
     for (const [, item] of physicsObjectsRef.current) {
       if (item.data.isStatic) continue;
@@ -202,12 +412,24 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
       const dist = Math.hypot(dx, dz);
 
       const dot = (dx * kickFwdX + dz * kickFwdZ) / (dist || 1);
-      if (dist < 3.2 && dy >= -0.5 && dy <= 2.2 && dot > 0.4) {
-        const force = 35;
+      if (dist < 3.2 && dy >= -0.6 && dy <= 2.4 && dot > 0.35) {
+        const mass = item.data.mass || 3.5;
+        // Realistic impulse scaled with object mass and impact velocity
+        const kickPower = Math.max(18, 32 * Math.sqrt(mass / 3.5));
+        const upLift = Math.min(12, 6 + mass * 1.2);
+
+        // Contact point at foot level (induces natural tumbling torque)
+        const hitPoint: [number, number, number] = [
+          item.mesh.position.x - kickFwdX * 0.3,
+          item.mesh.position.y - 0.35,
+          item.mesh.position.z - kickFwdZ * 0.3,
+        ];
+
         sendWs({
           type: 'interact_object',
           objectId: item.data.id,
-          impulse: [kickFwdX * force, 14, kickFwdZ * force],
+          impulse: [kickFwdX * kickPower, upLift, kickFwdZ * kickPower],
+          point: hitPoint,
         });
       }
     }
@@ -216,14 +438,14 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
       if (localPlayerStateRef.current.anim === 'kick') {
         localPlayerStateRef.current.anim = 'idle';
       }
-    }, 350);
+    }, 380);
   }, [sendWs]);
 
   // Jump handler
   const triggerJump = useCallback(() => {
     const p = localPlayerStateRef.current;
     if (p.isGrounded) {
-      p.vy = 8.5;
+      p.vy = 11.8;
       p.isGrounded = false;
       p.anim = 'jump';
       sound.playJump();
@@ -296,7 +518,7 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
     if (!isBuildMode) return;
 
     const group = new THREE.Group();
-    const { size, halfHeight } = getObjectDimensions(selectedObjectType);
+    const { size, halfHeight } = getObjectDimensions(selectedObjectType, buildScale);
 
     let geom: THREE.BufferGeometry;
     if (selectedObjectType === 'sphere') {
@@ -307,9 +529,10 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
       geom = new THREE.BoxGeometry(size[0], size[1], size[2]);
     }
 
-    // Hologram translucent green body
+    // Hologram translucent body (amber glow if auto-anchored, green if dynamic)
+    const ghostColor = autoAnchor ? 0xf59e0b : 0x22c55e;
     const mat = new THREE.MeshBasicMaterial({
-      color: 0x22c55e,
+      color: ghostColor,
       transparent: true,
       opacity: 0.52,
       depthWrite: false,
@@ -318,8 +541,8 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
     group.add(fillMesh);
 
     // Floor placement ring / footprint
-    const ringGeom = new THREE.RingGeometry(0.5, 0.7, 24);
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0x22c55e, side: THREE.DoubleSide });
+    const ringGeom = new THREE.RingGeometry(0.5 * Math.max(0.5, buildScale), 0.7 * Math.max(0.5, buildScale), 24);
+    const ringMat = new THREE.MeshBasicMaterial({ color: ghostColor, side: THREE.DoubleSide });
     const ring = new THREE.Mesh(ringGeom, ringMat);
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = -halfHeight + 0.02;
@@ -335,7 +558,7 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
         ghostMeshRef.current = null;
       }
     };
-  }, [isBuildMode, selectedObjectType]);
+  }, [isBuildMode, selectedObjectType, buildScale, autoAnchor]);
 
   // Main 3D Scene Initialization
   useEffect(() => {
@@ -349,13 +572,13 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
     const scene = new THREE.Scene();
     sceneRef.current = scene;
     scene.background = new THREE.Color('#ffffff');
-    scene.fog = new THREE.FogExp2('#ffffff', 0.02);
+    scene.fog = new THREE.FogExp2('#ffffff', 0.0035);
 
-    // Camera (Orbit Perspective)
-    const camera = new THREE.PerspectiveCamera(55, width / height, 0.1, 1000);
+    // Camera (Orbit Perspective) with extended view distance for truly infinite world
+    const camera = new THREE.PerspectiveCamera(55, width / height, 0.1, 2000);
     cameraRef.current = camera;
 
-    // WebGL Renderer with pixelated graphics support
+    // WebGL Renderer with subtle retro pixelation
     const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
     rendererRef.current = renderer;
     renderer.shadowMap.enabled = true;
@@ -368,26 +591,28 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
     scene.add(hemiLight);
 
     const dirLight = new THREE.DirectionalLight(0xffffff, 1.45);
-    dirLight.position.set(14, 28, 14);
+    dirLight.position.set(16, 32, 16);
     dirLight.castShadow = true;
     dirLight.shadow.mapSize.width = 2048;
     dirLight.shadow.mapSize.height = 2048;
     dirLight.shadow.camera.near = 0.5;
-    dirLight.shadow.camera.far = 80;
-    const d = 26;
+    dirLight.shadow.camera.far = 120;
+    const d = 36;
     dirLight.shadow.camera.left = -d;
     dirLight.shadow.camera.right = d;
     dirLight.shadow.camera.top = d;
     dirLight.shadow.camera.bottom = -d;
     dirLight.shadow.bias = -0.0005;
     scene.add(dirLight);
+    dirLightRef.current = dirLight;
 
     const fillLight = new THREE.DirectionalLight(0xe2e8f0, 0.45);
-    fillLight.position.set(-14, 12, -14);
+    fillLight.position.set(-16, 16, -16);
     scene.add(fillLight);
+    fillLightRef.current = fillLight;
 
-    // Tiled White Arena Floor (Infinite Grid)
-    const floorSize = 1000; // Large enough to fade into fog
+    // Tiled White Infinite Floor (Continuous Infinite Grid)
+    const floorSize = 1600; // Expansive field that seamlessly tracks player
     const floorGeom = new THREE.PlaneGeometry(floorSize, floorSize);
 
     const floorCanvas = document.createElement('canvas');
@@ -430,12 +655,28 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
     scene.add(floorMesh);
     groundMeshRef.current = floorMesh;
 
+    // Target Reticle (Wireframe Box for Anchor & Unanchor Tools)
+    const reticleGeom = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1));
+    const reticleMat = new THREE.LineBasicMaterial({
+      color: 0xf59e0b,
+      linewidth: 3,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+    });
+    const reticleMesh = new THREE.LineSegments(reticleGeom, reticleMat);
+    reticleMesh.renderOrder = 999;
+    reticleMesh.visible = false;
+    scene.add(reticleMesh);
+    targetReticleRef.current = reticleMesh;
+    targetReticleMatRef.current = reticleMat;
+
     // Create Local Stickman Mesh
     const localParts = createStickmanMesh(playerColor, playerName);
     localStickmanRef.current = localParts;
     scene.add(localParts.root);
 
-    // Resize & 2X Retro Pixelated Scaling Handler
+    // Resize & Crisp High-Definition Scaling Handler
     const updateRendererSize = () => {
       if (!container || !camera || !renderer) return;
       const w = container.clientWidth || window.innerWidth;
@@ -451,10 +692,10 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
       }
       camera.updateProjectionMatrix();
 
-      // 1.5X Retro Pixelated Scaling
-      const scale = 2.5;
-      const renderW = Math.max(120, Math.floor(w / scale));
-      const renderH = Math.max(90, Math.floor(h / scale));
+      // Subtle Retro Pixelation Scaling (gentle, stylish pixel crunch)
+      const scale = 1.35;
+      const renderW = Math.max(160, Math.floor(w / scale));
+      const renderH = Math.max(120, Math.floor(h / scale));
       renderer.setPixelRatio(1);
       renderer.setSize(renderW, renderH, false);
       renderer.domElement.style.width = '100%';
@@ -497,7 +738,7 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
 
         if (msg.type === 'init') {
           selfIdRef.current = msg.selfId;
-          onRoomIdConfirmed(msg.roomId);
+          callbacksRef.current.onRoomIdConfirmed(msg.roomId);
 
           // Spawn existing physics objects
           for (const obj of msg.objects) {
@@ -531,7 +772,7 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
             }
           }
 
-          onPlayerCountChange(remotePlayersRef.current.size + 1);
+          callbacksRef.current.onPlayerCountChange(remotePlayersRef.current.size + 1);
         } else if (msg.type === 'player_joined') {
           if (msg.player.id !== selfIdRef.current) {
             const existing = remotePlayersRef.current.get(msg.player.id);
@@ -548,8 +789,8 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
                 targetPos: new THREE.Vector3(msg.player.x, msg.player.y, msg.player.z),
                 targetRotY: msg.player.rotY,
               });
-              onPlayerCountChange(remotePlayersRef.current.size + 1);
-              onChatReceived('System', `${msg.player.name} joined room`);
+              callbacksRef.current.onPlayerCountChange(remotePlayersRef.current.size + 1);
+              callbacksRef.current.onChatReceived('System', `${msg.player.name} joined room`);
             }
           }
         } else if (msg.type === 'player_left') {
@@ -557,8 +798,8 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
           if (item) {
             scene.remove(item.meshParts.root);
             remotePlayersRef.current.delete(msg.id);
-            onPlayerCountChange(remotePlayersRef.current.size + 1);
-            onChatReceived('System', `${item.state.name} left room`);
+            callbacksRef.current.onPlayerCountChange(remotePlayersRef.current.size + 1);
+            callbacksRef.current.onChatReceived('System', `${item.state.name} left room`);
           }
         } else if (msg.type === 'world_tick') {
           for (const p of msg.players) {
@@ -593,6 +834,41 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
               targetQuat: new THREE.Quaternion(msg.object.qx, msg.object.qy, msg.object.qz, msg.object.qw),
             });
           }
+        } else if (msg.type === 'object_updated') {
+          const item = physicsObjectsRef.current.get(msg.object.id);
+          if (item) {
+            const sizeChanged =
+              !item.data.size ||
+              item.data.size[0] !== msg.object.size[0] ||
+              item.data.size[1] !== msg.object.size[1] ||
+              item.data.size[2] !== msg.object.size[2];
+
+            item.data = { ...msg.object };
+            if (sizeChanged) {
+              scene.remove(item.mesh);
+              const newMesh = createPhysicsObjectMesh(msg.object);
+              newMesh.position.set(msg.object.x, msg.object.y, msg.object.z);
+              newMesh.quaternion.set(msg.object.qx, msg.object.qy, msg.object.qz, msg.object.qw);
+              scene.add(newMesh);
+              item.mesh = newMesh;
+            }
+
+            item.targetPos.set(msg.object.x, msg.object.y, msg.object.z);
+            item.targetQuat.set(msg.object.qx, msg.object.qy, msg.object.qz, msg.object.qw);
+            updateObjectAnchorVisual(item.mesh, Boolean(msg.object.isStatic), item.data.size);
+          }
+        } else if (msg.type === 'object_removed') {
+          const item = physicsObjectsRef.current.get(msg.id);
+          if (item) {
+            scene.remove(item.mesh);
+            physicsObjectsRef.current.delete(msg.id);
+            if (hoveredObjectIdRef.current === msg.id) {
+              hoveredObjectIdRef.current = null;
+              if (targetReticleRef.current) {
+                targetReticleRef.current.visible = false;
+              }
+            }
+          }
         } else if (msg.type === 'objects_reset') {
           for (const [, item] of physicsObjectsRef.current) {
             scene.remove(item.mesh);
@@ -610,9 +886,9 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
               targetQuat: new THREE.Quaternion(obj.qx, obj.qy, obj.qz, obj.qw),
             });
           }
-          onChatReceived('System', 'Room objects reset');
+          callbacksRef.current.onChatReceived('System', 'Room objects reset');
         } else if (msg.type === 'chat_broadcast') {
-          onChatReceived(msg.name, msg.text);
+          callbacksRef.current.onChatReceived(msg.name, msg.text);
           const remote = remotePlayersRef.current.get(msg.id);
           if (remote) {
             updateChatBubble(remote.meshParts, msg.text);
@@ -622,7 +898,7 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
           }
         } else if (msg.type === 'pong') {
           const rtt = Math.round(performance.now() - msg.t);
-          onPingChange(Math.max(1, rtt));
+          callbacksRef.current.onPingChange(Math.max(1, rtt));
         }
       } catch (err) {
         console.error('Error processing WS packet:', err);
@@ -645,13 +921,32 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
         e.preventDefault();
         triggerSlip();
       } else if (e.code === 'KeyR') {
-        // BABFT Rotate block
+        // Rotate block in build mode
         e.preventDefault();
-        onRotateBuild();
-      } else if (e.code === 'KeyQ') {
+        callbacksRef.current.onRotateBuild();
+      } else if (e.code === 'KeyB' || e.code === 'KeyQ') {
         // Toggle build mode
         e.preventDefault();
-        onToggleBuildMode();
+        callbacksRef.current.onToggleBuildMode();
+      } else if (e.code === 'KeyL' || e.code === 'Digit1') {
+        // Equip/Toggle Anchor Tool (Lock block)
+        e.preventDefault();
+        callbacksRef.current.onSelectTool?.('anchor');
+      } else if (e.code === 'KeyU' || e.code === 'Digit2') {
+        // Equip/Toggle Unanchor Tool (Unlock block)
+        e.preventDefault();
+        callbacksRef.current.onSelectTool?.('unanchor');
+      } else if (e.code === 'KeyX' || e.code === 'Digit3' || e.code === 'Delete' || e.code === 'Backspace') {
+        // Equip/Toggle Delete Tool (Remove block)
+        e.preventDefault();
+        callbacksRef.current.onSelectTool?.('delete');
+      } else if (e.code === 'Digit4' || e.code === 'KeyZ') {
+        // Equip/Toggle Scale Tool
+        e.preventDefault();
+        callbacksRef.current.onSelectTool?.('scale');
+      } else if (e.code === 'Escape') {
+        e.preventDefault();
+        callbacksRef.current.onSelectTool?.('none');
       }
     };
 
@@ -668,6 +963,9 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
 
     // Mouse & Pointer handlers
     const handlePointerDown = (e: MouseEvent) => {
+      // Ignore synthetic mouse events fired after touch events
+      if (performance.now() - lastTouchEndTimeRef.current < 500) return;
+
       if ((e.target as HTMLElement)?.tagName === 'CANVAS') {
         isMouseDownRef.current = true;
         lastMousePosRef.current = { x: e.clientX, y: e.clientY };
@@ -692,6 +990,7 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
     };
 
     const handlePointerUp = (e: MouseEvent) => {
+      if (performance.now() - lastTouchEndTimeRef.current < 500) return;
       if (!isMouseDownRef.current) return;
       isMouseDownRef.current = false;
 
@@ -701,16 +1000,23 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
         e.clientY - mouseDownStartPosRef.current.y
       );
 
-      // If clicked on canvas and build mode is active, place block like BABFT!
-      if (dragDist < 6 && isBuildMode && (e.target as HTMLElement)?.tagName === 'CANVAS') {
-        const rotRad = (buildRotationDeg * Math.PI) / 180;
-        sendWs({
-          type: 'spawn_object',
-          objectType: selectedObjectType,
-          position: ghostSnapPosRef.current,
-          rotationY: rotRad,
-        });
-        sound.playPop();
+      if (dragDist < 6 && (e.target as HTMLElement)?.tagName === 'CANVAS') {
+        if (activeToolRef.current === 'anchor') {
+          const hitId = findObjectAtScreenCoords(e.clientX, e.clientY);
+          handleAnchorAction(true, hitId || undefined);
+        } else if (activeToolRef.current === 'unanchor') {
+          const hitId = findObjectAtScreenCoords(e.clientX, e.clientY);
+          handleAnchorAction(false, hitId || undefined);
+        } else if (activeToolRef.current === 'delete') {
+          const hitId = findObjectAtScreenCoords(e.clientX, e.clientY);
+          handleDeleteAction(hitId || undefined);
+        } else if (activeToolRef.current === 'scale') {
+          const hitId = findObjectAtScreenCoords(e.clientX, e.clientY);
+          handleScaleAction(hitId || undefined);
+        } else if (activeToolRef.current === 'build') {
+          const pos = calculatePlacementPosition(e.clientX, e.clientY);
+          handlePlaceBlock(pos || undefined);
+        }
       }
     };
 
@@ -718,7 +1024,7 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
       cameraAngleRef.current.distance = Math.max(5, Math.min(32, cameraAngleRef.current.distance + e.deltaY * 0.015));
     };
 
-    // Touch handlers for mobile orbit and tap-to-place
+    // Touch handlers for mobile orbit and tap-to-interact
     let touchStartPos = { x: 0, y: 0 };
     let lastTouchPos = { x: 0, y: 0 };
     let initialPinchDist = 0;
@@ -736,6 +1042,16 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
         const rect = renderer.domElement.getBoundingClientRect();
         mouseCoordsRef.current.x = ((t.clientX - rect.left) / rect.width) * 2 - 1;
         mouseCoordsRef.current.y = -((t.clientY - rect.top) / rect.height) * 2 + 1;
+
+        // In build mode on mobile, preview ghost immediately at touched location
+        if (activeToolRef.current === 'build' || isBuildModeRef.current) {
+          const previewPos = calculatePlacementPosition(t.clientX, t.clientY);
+          if (previewPos && ghostMeshRef.current) {
+            ghostMeshRef.current.position.set(previewPos[0], previewPos[1], previewPos[2]);
+            ghostMeshRef.current.visible = true;
+            ghostSnapPosRef.current = previewPos;
+          }
+        }
       } else if (e.touches.length === 2) {
         isTouchOrbiting = false;
         initialPinchDist = Math.hypot(
@@ -772,12 +1088,28 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
     const handleTouchEnd = () => {
       if (isTouchOrbiting) {
         isTouchOrbiting = false;
+        lastTouchEndTimeRef.current = performance.now();
         const elapsed = performance.now() - touchStartTime;
         const dist = Math.hypot(lastTouchPos.x - touchStartPos.x, lastTouchPos.y - touchStartPos.y);
 
-        // Tap detected (< 280ms and moved < 12px)
-        if (elapsed < 280 && dist < 12 && isBuildMode) {
-          handlePlaceBlock();
+        // Tap detected (< 350ms and moved < 16px)
+        if (elapsed < 350 && dist < 16) {
+          if (activeToolRef.current === 'anchor') {
+            const hitId = findObjectAtScreenCoords(touchStartPos.x, touchStartPos.y);
+            handleAnchorAction(true, hitId || undefined);
+          } else if (activeToolRef.current === 'unanchor') {
+            const hitId = findObjectAtScreenCoords(touchStartPos.x, touchStartPos.y);
+            handleAnchorAction(false, hitId || undefined);
+          } else if (activeToolRef.current === 'delete') {
+            const hitId = findObjectAtScreenCoords(touchStartPos.x, touchStartPos.y);
+            handleDeleteAction(hitId || undefined);
+          } else if (activeToolRef.current === 'scale') {
+            const hitId = findObjectAtScreenCoords(touchStartPos.x, touchStartPos.y);
+            handleScaleAction(hitId || undefined);
+          } else if (activeToolRef.current === 'build') {
+            const spawnPos = calculatePlacementPosition(touchStartPos.x, touchStartPos.y);
+            handlePlaceBlock(spawnPos || undefined);
+          }
         }
       }
     };
@@ -797,6 +1129,7 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
     let animationFrameId: number;
     let lastTime = performance.now();
     let networkSendTimer = 0;
+    let coordsSendTimer = 0;
 
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
@@ -804,7 +1137,7 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
       const dt = Math.min((now - lastTime) / 1000, 0.1);
       lastTime = now;
 
-      // 1. Process Local Movement
+      // 1. Process Local Movement with Realistic Kinematics (Ground Traction vs. Air Drag)
       const p = localPlayerStateRef.current;
       const keys = keysRef.current;
       const touch = touchMoveRef.current;
@@ -824,25 +1157,31 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
 
       const inputLen = Math.hypot(moveX, moveZ);
       const isSprinting = keys['ShiftLeft'] || keys['ShiftRight'] || isTouchSprintingRef.current;
-      const moveSpeed = isSprinting ? 9.5 : 5.8;
+      const maxMoveSpeed = isSprinting ? 9.2 : 5.6;
+
+      const camAngle = cameraAngleRef.current.theta;
+      const fwdX = -Math.sin(camAngle);
+      const fwdZ = -Math.cos(camAngle);
+      const rightX = Math.cos(camAngle);
+      const rightZ = -Math.sin(camAngle);
+
+      let targetVx = 0;
+      let targetVz = 0;
 
       if (inputLen > 0.01) {
         const nx = moveX / inputLen;
         const nz = moveZ / inputLen;
+        targetVx = (rightX * nx + fwdX * (-nz)) * maxMoveSpeed;
+        targetVz = (rightZ * nx + fwdZ * (-nz)) * maxMoveSpeed;
+      }
 
-        const camAngle = cameraAngleRef.current.theta;
-        const fwdX = -Math.sin(camAngle);
-        const fwdZ = -Math.cos(camAngle);
-        const rightX = Math.cos(camAngle);
-        const rightZ = -Math.sin(camAngle);
+      // Realistic physical responsiveness: high ground traction, realistic air inertia
+      const accelRate = p.isGrounded ? (inputLen > 0.01 ? 16 : 14) : 4.5;
+      p.vx += (targetVx - p.vx) * Math.min(dt * accelRate, 1);
+      p.vz += (targetVz - p.vz) * Math.min(dt * accelRate, 1);
 
-        const targetVx = (rightX * nx + fwdX * (-nz)) * moveSpeed;
-        const targetVz = (rightZ * nx + fwdZ * (-nz)) * moveSpeed;
-
-        p.vx += (targetVx - p.vx) * Math.min(dt * 12, 1);
-        p.vz += (targetVz - p.vz) * Math.min(dt * 12, 1);
-
-        const targetRot = Math.atan2(-p.vx, -p.vz);
+      if (Math.hypot(p.vx, p.vz) > 0.1) {
+        const targetRot = Math.atan2(p.vx, p.vz);
         let diff = targetRot - p.rotY;
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
@@ -852,16 +1191,119 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
           p.anim = isSprinting ? 'run' : 'walk';
         }
       } else {
-        p.vx += (0 - p.vx) * Math.min(dt * 12, 1);
-        p.vz += (0 - p.vz) * Math.min(dt * 12, 1);
         if (p.isGrounded && p.anim !== 'kick' && p.anim !== 'slip' && p.anim !== 'wave' && p.anim !== 'dance') {
           p.anim = 'idle';
         }
       }
 
-      // Calculate dynamic floorY by checking overlapping physics objects
+      // 1. Calculate tentative horizontal movement
+      let standingOnObjVelocity = { vx: 0, vz: 0 };
+      let nextX = p.x + (p.vx + standingOnObjVelocity.vx) * dt;
+      let nextZ = p.z + (p.vz + standingOnObjVelocity.vz) * dt;
+      const playerRadius = 0.30;
+
+      // 2. Horizontal obstacle collision resolution (blocks player from walking through walls/anchored blocks)
+      for (const [, item] of physicsObjectsRef.current) {
+        if (item.data.type === 'trampoline') continue;
+        const px = item.mesh.position.x;
+        const py = item.mesh.position.y;
+        const pz = item.mesh.position.z;
+        const size = item.data.size;
+
+        if (item.data.type === 'sphere') {
+          const radius = size[0];
+          const bottomY = py - radius;
+          const topY = py + radius;
+          if (p.y < topY - 0.25 && p.y + 1.6 > bottomY + 0.05) {
+            const dx = nextX - px;
+            const dz = nextZ - pz;
+            const dist = Math.hypot(dx, dz);
+            const minDist = radius + playerRadius;
+            if (dist < minDist && dist > 0.001) {
+              const push = minDist - dist;
+              nextX += (dx / dist) * push;
+              nextZ += (dz / dist) * push;
+            }
+          }
+        } else if (item.data.type === 'barrel') {
+          const radius = size[0];
+          const halfH = size[1] / 2;
+          const bottomY = py - halfH;
+          const topY = py + halfH;
+          if (p.y < topY - 0.28 && p.y + 1.6 > bottomY + 0.05) {
+            const dx = nextX - px;
+            const dz = nextZ - pz;
+            const dist = Math.hypot(dx, dz);
+            const minDist = radius + playerRadius;
+            if (dist < minDist && dist > 0.001) {
+              const push = minDist - dist;
+              nextX += (dx / dist) * push;
+              nextZ += (dz / dist) * push;
+            }
+          }
+        } else if (item.data.type === 'ramp') {
+          // Ramp allows slope walking from lower edge
+          const halfW = size[0] / 2;
+          const halfD = size[2] / 2;
+          const h = size[1];
+          const bottomY = py - h / 2;
+          const topY = py + h / 2;
+          if (p.y < bottomY - 0.1 && p.y + 1.6 > bottomY) {
+            const dx = nextX - px;
+            const dz = nextZ - pz;
+            if (Math.abs(dx) < halfW + playerRadius && Math.abs(dz) < halfD + playerRadius) {
+              const penX = (halfW + playerRadius) - Math.abs(dx);
+              const penZ = (halfD + playerRadius) - Math.abs(dz);
+              if (penX < penZ) {
+                nextX += Math.sign(dx) * penX;
+              } else {
+                nextZ += Math.sign(dz) * penZ;
+              }
+            }
+          }
+        } else {
+          // Box, Domino, Dice
+          const halfW = size[0] / 2;
+          const halfH = size[1] / 2;
+          const halfD = size[2] / 2;
+          const bottomY = py - halfH;
+          const topY = py + halfH;
+
+          // If the player is below the top step height, they hit the solid walls of the block
+          if (p.y < topY - 0.28 && p.y + 1.6 > bottomY + 0.05) {
+            const rotY = item.mesh.rotation.y || 0;
+            const cosA = Math.cos(-rotY);
+            const sinA = Math.sin(-rotY);
+            const relX = (nextX - px) * cosA - (nextZ - pz) * sinA;
+            const relZ = (nextX - px) * sinA + (nextZ - pz) * cosA;
+            const extX = halfW + playerRadius;
+            const extZ = halfD + playerRadius;
+
+            if (Math.abs(relX) < extX && Math.abs(relZ) < extZ) {
+              const penX = extX - Math.abs(relX);
+              const penZ = extZ - Math.abs(relZ);
+              let pushLocalX = 0;
+              let pushLocalZ = 0;
+              if (penX < penZ) {
+                pushLocalX = Math.sign(relX) * penX;
+              } else {
+                pushLocalZ = Math.sign(relZ) * penZ;
+              }
+              const cosR = Math.cos(rotY);
+              const sinR = Math.sin(rotY);
+              nextX += pushLocalX * cosR - pushLocalZ * sinR;
+              nextZ += pushLocalX * sinR + pushLocalZ * cosR;
+            }
+          }
+        }
+      }
+
+      p.x = nextX;
+      p.z = nextZ;
+
+      // 3. Dynamic surface vertical support (standing / walking on top of blocks, ramps, spheres)
       let floorY = 0;
-      const playerRadius = 0.25;
+      standingOnObjVelocity = { vx: 0, vz: 0 };
       
       for (const [, item] of physicsObjectsRef.current) {
         if (item.data.type === 'trampoline') continue; // Handled separately
@@ -871,36 +1313,76 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
         const pz = item.mesh.position.z;
         const size = item.data.size;
         
-        let halfW = size[0] / 2;
-        let halfH = size[1] / 2;
-        let halfD = size[2] / 2;
-        
         if (item.data.type === 'sphere') {
-          halfW = size[0]; halfH = size[0]; halfD = size[0];
+          const radius = size[0];
+          const dx = p.x - px;
+          const dz = p.z - pz;
+          const distXZ = Math.hypot(dx, dz);
+          if (distXZ < radius + playerRadius * 0.8) {
+            const domeY = py + Math.sqrt(Math.max(0, radius * radius - distXZ * distXZ));
+            if (p.y >= domeY - 0.45) {
+              if (domeY > floorY) {
+                floorY = domeY;
+                if (!item.data.isStatic) {
+                  standingOnObjVelocity = { vx: item.data.vx, vz: item.data.vz };
+                }
+              }
+            }
+          }
         } else if (item.data.type === 'ramp') {
-          // Approximate ramp as a flat box for standing logic
-          halfW = size[0] / 2; halfH = size[1] / 2; halfD = size[2] / 2;
-        }
-        
-        const dx = Math.abs(p.x - px);
-        const dz = Math.abs(p.z - pz);
-        
-        if (dx < halfW + playerRadius && dz < halfD + playerRadius) {
-          const topY = py + halfH;
-          // Only stand on it if we are falling onto it or already on it (feet above object center)
-          if (p.y >= py - 0.2) {
-            floorY = Math.max(floorY, topY);
+          const halfW = size[0] / 2;
+          const h = size[1];
+          const halfD = size[2] / 2;
+          const dx = Math.abs(p.x - px);
+          const localZ = p.z - pz;
+          
+          if (dx < halfW + playerRadius * 0.7 && Math.abs(localZ) < halfD + playerRadius * 0.7) {
+            // Slope height calculation: top at z = -halfD, bottom at z = +halfD
+            const t = Math.max(0, Math.min(1, (localZ + halfD) / (halfD * 2)));
+            const rampSurfaceY = (py + h / 2) - h * t;
+            if (p.y >= rampSurfaceY - 0.45) {
+              floorY = Math.max(floorY, rampSurfaceY);
+            }
+          }
+        } else {
+          // Box, Domino, Barrel, Dice
+          const halfW = (item.data.type === 'barrel' ? size[0] : size[0] / 2);
+          const halfH = size[1] / 2;
+          const halfD = (item.data.type === 'barrel' ? size[0] : size[2] / 2);
+          
+          const rotY = item.mesh.rotation.y || 0;
+          const cosA = Math.cos(-rotY);
+          const sinA = Math.sin(-rotY);
+          const relX = (p.x - px) * cosA - (p.z - pz) * sinA;
+          const relZ = (p.x - px) * sinA + (p.z - pz) * cosA;
+          
+          if (Math.abs(relX) < halfW + playerRadius * 0.75 && Math.abs(relZ) < halfD + playerRadius * 0.75) {
+            const topY = py + halfH;
+            if (p.y >= topY - 0.45) {
+              if (topY > floorY) {
+                floorY = topY;
+                if (!item.data.isStatic) {
+                  standingOnObjVelocity = { vx: item.data.vx, vz: item.data.vz };
+                }
+              }
+            }
           }
         }
       }
 
-      p.vy -= 18 * dt; // slightly stronger gravity for snappier jumps
-      p.x += p.vx * dt;
+      // Realistic ballistic gravity & air terminal velocity
+      const prevVy = p.vy;
+      p.vy -= 20.0 * dt;
+      p.vy = Math.max(-32, p.vy);
+
       p.y += p.vy * dt;
-      p.z += p.vz * dt;
 
       if (p.y <= floorY) {
         p.y = floorY;
+        // Impact landing sound when landing with downward speed
+        if (!p.isGrounded && prevVy < -3.5) {
+          sound.playLand(Math.min(2.5, Math.abs(prevVy) / 5.5));
+        }
         p.vy = Math.max(0, p.vy);
         p.isGrounded = true;
         if (p.anim === 'jump') {
@@ -910,7 +1392,7 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
         p.isGrounded = false;
       }
 
-      // Trampoline check
+      // Trampoline check with Hooke's spring launch
       for (const [, item] of physicsObjectsRef.current) {
         if (item.data.type === 'trampoline') {
           const dx = Math.abs(p.x - item.mesh.position.x);
@@ -919,7 +1401,7 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
           const halfD = item.data.size[2] / 2;
 
           if (dx < halfW && dz < halfD && p.y <= item.mesh.position.y + 0.35 && p.vy <= 0) {
-            p.vy = 18.0;
+            p.vy = 22.5;
             p.y = item.mesh.position.y + 0.4;
             p.isGrounded = false;
             p.anim = 'jump';
@@ -928,20 +1410,40 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
         }
       }
 
-      const BOUND = 19.2;
-      p.x = Math.max(-BOUND, Math.min(BOUND, p.x));
-      p.z = Math.max(-BOUND, Math.min(BOUND, p.z));
+      // Truly Infinite World: No boundary walls or clamps!
+      // If player drops into the void below y = -40, recover safely to ground level
+      if (p.y < -40) {
+        p.y = 0;
+        p.vy = 0;
+      }
+
+      // Dynamically reposition the infinite floor mesh centered around player,
+      // snapped to 4-unit texture grid intervals so the grid lines never jitter or slide
+      if (groundMeshRef.current) {
+        groundMeshRef.current.position.x = Math.floor(p.x / 4) * 4;
+        groundMeshRef.current.position.z = Math.floor(p.z / 4) * 4;
+      }
+
+      // Dynamically move directional shadow-casting lights along with player
+      if (dirLightRef.current) {
+        dirLightRef.current.position.set(p.x + 16, 32, p.z + 16);
+        dirLightRef.current.target.position.set(p.x, p.y, p.z);
+        dirLightRef.current.target.updateMatrixWorld();
+      }
+      if (fillLightRef.current) {
+        fillLightRef.current.position.set(p.x - 16, 16, p.z - 16);
+      }
 
       // Update Local Stickman Mesh
       if (localStickmanRef.current) {
         localStickmanRef.current.root.position.set(p.x, p.y, p.z);
         localStickmanRef.current.root.rotation.y = p.rotY;
         const currentSpeed = Math.hypot(p.vx, p.vz);
-        animateStickman(localStickmanRef.current, now * 0.001, p.anim, currentSpeed, dt);
+        animateStickman(localStickmanRef.current, now * 0.001, p.anim, currentSpeed, dt, p.vy);
       }
 
       // 2. BABFT Style Placement Raycasting & Snapping
-      if (isBuildMode && ghostMeshRef.current && camera) {
+      if (isBuildModeRef.current && ghostMeshRef.current && camera) {
         raycasterRef.current.setFromCamera(mouseCoordsRef.current, camera);
 
         // Raycast targets: ground mesh and all physics objects
@@ -952,7 +1454,7 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
         }
 
         const intersects = raycasterRef.current.intersectObjects(targets, true);
-        const { halfHeight } = getObjectDimensions(selectedObjectType);
+        const { halfHeight } = getObjectDimensions(selectedObjectTypeRef.current, buildScaleRef.current);
 
         if (intersects.length > 0) {
           const hit = intersects[0];
@@ -984,18 +1486,68 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
 
           ghostMeshRef.current.visible = true;
           ghostMeshRef.current.position.set(snapX, snapY, snapZ);
-          ghostMeshRef.current.rotation.y = (buildRotationDeg * Math.PI) / 180;
+          ghostMeshRef.current.rotation.y = (buildRotationDegRef.current * Math.PI) / 180;
           ghostSnapPosRef.current = [snapX, snapY, snapZ];
         } else {
           // Default in front of stickman
-          const fwdX = -Math.sin(p.rotY);
-          const fwdZ = -Math.cos(p.rotY);
+          const fwdX = Math.sin(p.rotY);
+          const fwdZ = Math.cos(p.rotY);
           const fallbackX = Math.round((p.x + fwdX * 2.5) / 1.0) * 1.0;
           const fallbackZ = Math.round((p.z + fwdZ * 2.5) / 1.0) * 1.0;
           ghostMeshRef.current.position.set(fallbackX, halfHeight, fallbackZ);
-          ghostMeshRef.current.rotation.y = (buildRotationDeg * Math.PI) / 180;
+          ghostMeshRef.current.rotation.y = (buildRotationDegRef.current * Math.PI) / 180;
           ghostSnapPosRef.current = [fallbackX, halfHeight, fallbackZ];
         }
+      }
+
+      // 2b. Anchor / Unanchor / Delete / Scale Tool Raycasting & Target Reticle
+      if ((activeToolRef.current === 'anchor' || activeToolRef.current === 'unanchor' || activeToolRef.current === 'delete' || activeToolRef.current === 'scale') && camera) {
+        raycasterRef.current.setFromCamera(mouseCoordsRef.current, camera);
+        const targets: THREE.Object3D[] = [];
+        const objMap = new Map<THREE.Object3D, string>();
+        for (const [id, item] of physicsObjectsRef.current) {
+          targets.push(item.mesh);
+          objMap.set(item.mesh, id);
+        }
+
+        const intersects = raycasterRef.current.intersectObjects(targets, true);
+        if (intersects.length > 0) {
+          let topMesh: THREE.Object3D | null = intersects[0].object;
+          while (topMesh && !objMap.has(topMesh) && topMesh.parent) {
+            topMesh = topMesh.parent;
+          }
+          const hitId = topMesh ? objMap.get(topMesh) : null;
+          hoveredObjectIdRef.current = hitId || null;
+
+          if (hitId && targetReticleRef.current && targetReticleMatRef.current) {
+            const item = physicsObjectsRef.current.get(hitId);
+            if (item) {
+              targetReticleRef.current.visible = true;
+              targetReticleRef.current.position.copy(item.mesh.position);
+              targetReticleRef.current.quaternion.copy(item.mesh.quaternion);
+              const [sx, sy, sz] = item.data.size;
+              targetReticleRef.current.scale.set(sx * 1.08, sy * 1.08, sz * 1.08);
+
+              if (activeToolRef.current === 'anchor') {
+                targetReticleMatRef.current.color.setHex(0xf59e0b); // Amber gold for anchor lock
+              } else if (activeToolRef.current === 'unanchor') {
+                targetReticleMatRef.current.color.setHex(0x38bdf8); // Sky blue for unanchor
+              } else if (activeToolRef.current === 'scale') {
+                targetReticleMatRef.current.color.setHex(0xa855f7); // Purple for scale
+              } else {
+                targetReticleMatRef.current.color.setHex(0xef4444); // Crimson red for delete
+              }
+            }
+          }
+        } else {
+          hoveredObjectIdRef.current = null;
+          if (targetReticleRef.current) {
+            targetReticleRef.current.visible = false;
+          }
+        }
+      } else if (targetReticleRef.current) {
+        targetReticleRef.current.visible = false;
+        hoveredObjectIdRef.current = null;
       }
 
       // 3. Interpolate Remote Players
@@ -1006,7 +1558,8 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
         while (diff > Math.PI) diff -= Math.PI * 2;
         remote.meshParts.root.rotation.y += diff * Math.min(dt * 15, 1);
 
-        animateStickman(remote.meshParts, now * 0.001, remote.state.anim, 5, dt);
+        const remoteVy = (remote.targetPos.y - remote.meshParts.root.position.y) / Math.max(0.016, dt);
+        animateStickman(remote.meshParts, now * 0.001, remote.state.anim, 5, dt, remoteVy);
       }
 
       // 4. Interpolate Physics Objects
@@ -1040,28 +1593,27 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
         if (localStickmanRef.current) {
           const dist = Math.max(12, localStickmanRef.current.root.position.distanceTo(camPos));
           const factor = dist / 12; // Base distance where scale is 1
-          localStickmanRef.current.nameTagSprite.scale.set(1.6 * factor, 0.4 * factor, 1);
+          localStickmanRef.current.nameTagSprite.scale.set(3.2 * factor, 0.8 * factor, 1);
           localStickmanRef.current.chatBubbleSprite.scale.set(2.2 * factor, 0.7 * factor, 1);
           
           // Slightly raise them so they don't overlap as much when scaled up
-          localStickmanRef.current.nameTagSprite.position.set(0, 2.42 + (factor - 1) * 0.5, 0);
-          localStickmanRef.current.chatBubbleSprite.position.set(0, 2.92 + (factor - 1) * 0.7, 0);
+          localStickmanRef.current.nameTagSprite.position.set(0, 2.8 + (factor - 1) * 0.8, 0);
+          localStickmanRef.current.chatBubbleSprite.position.set(0, 3.4 + (factor - 1) * 1.0, 0);
         }
 
         // Scale remote player tags
         for (const [, remote] of remotePlayersRef.current) {
           const dist = Math.max(12, remote.meshParts.root.position.distanceTo(camPos));
           const factor = dist / 12;
-          remote.meshParts.nameTagSprite.scale.set(1.6 * factor, 0.4 * factor, 1);
+          remote.meshParts.nameTagSprite.scale.set(3.2 * factor, 0.8 * factor, 1);
           remote.meshParts.chatBubbleSprite.scale.set(2.2 * factor, 0.7 * factor, 1);
           
-          remote.meshParts.nameTagSprite.position.set(0, 2.42 + (factor - 1) * 0.5, 0);
-          remote.meshParts.chatBubbleSprite.position.set(0, 2.92 + (factor - 1) * 0.7, 0);
+          remote.meshParts.nameTagSprite.position.set(0, 2.8 + (factor - 1) * 0.8, 0);
+          remote.meshParts.chatBubbleSprite.position.set(0, 3.4 + (factor - 1) * 1.0, 0);
         }
       }
 
-      // 7. Send Network Update
-
+      // 7. Send Network & Coordinates Update
       networkSendTimer += dt;
       if (networkSendTimer >= 0.04) {
         networkSendTimer = 0;
@@ -1077,6 +1629,12 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
           anim: p.anim,
           isGrounded: p.isGrounded,
         });
+      }
+
+      coordsSendTimer += dt;
+      if (coordsSendTimer >= 0.1) {
+        coordsSendTimer = 0;
+        callbacksRef.current.onPlayerCoordsChange?.(Math.round(p.x * 10) / 10, Math.round(p.z * 10) / 10);
       }
 
       renderer.render(scene, camera);
@@ -1109,7 +1667,15 @@ export const SandboxGame: React.FC<SandboxGameProps> = ({
         container.removeChild(renderer.domElement);
       }
     };
-  }, [buildRotationDeg, handlePlaceBlock, isBuildMode, isPrivateRoom, onChatReceived, onPingChange, onPlayerCountChange, onRoomIdConfirmed, onRotateBuild, onToggleBuildMode, playerColor, playerName, roomId, selectedObjectType, sendWs, triggerJump, triggerKick, triggerSlip]);
+  }, [isPrivateRoom, roomId, sendWs, triggerJump, triggerKick, triggerSlip]);
+
+  // Update local avatar appearance if player color or name changes dynamically
+  useEffect(() => {
+    if (localStickmanRef.current) {
+      updateStickmanColor(localStickmanRef.current, playerColor);
+      updateNameTag(localStickmanRef.current, playerName, playerColor);
+    }
+  }, [playerColor, playerName]);
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-slate-900 select-none">

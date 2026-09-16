@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { sound } from '../game/SoundEffects.ts';
 import { DeviceInfo } from '../hooks/useDeviceDetection.ts';
+import { AvatarPreview3D } from './AvatarPreview3D.tsx';
 
 interface TitleScreenProps {
   onJoin: (name: string, color: string, roomCode?: string, isCreate?: boolean) => void;
@@ -170,30 +171,13 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({ onJoin, deviceInfo }) 
             </div>
 
             {/* Avatar Preview */}
-            <div className="flex justify-center mb-6">
-              <div className="h-32 w-32 border-2 border-black bg-neutral-100 flex items-center justify-center relative overflow-hidden">
-                <svg viewBox="0 0 120 160" className="h-full w-full p-2 drop-shadow-md">
-                  <defs>
-                    <radialGradient id="metallicHead" cx="38%" cy="32%" r="65%">
-                      <stop offset="0%" stopColor="#ffffff" />
-                      <stop offset="35%" stopColor={color} />
-                      <stop offset="85%" stopColor={color} />
-                      <stop offset="100%" stopColor="#000000" />
-                    </radialGradient>
-                    <linearGradient id="metallicBody" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" stopColor="#ffffff" />
-                      <stop offset="20%" stopColor={color} />
-                      <stop offset="70%" stopColor={color} />
-                      <stop offset="100%" stopColor="#000000" />
-                    </linearGradient>
-                  </defs>
-                  <circle cx="60" cy="30" r="22" fill="url(#metallicHead)" />
-                  <rect x="52" y="50" width="16" height="50" rx="8" fill="url(#metallicBody)" />
-                  <rect x="25" y="55" width="12" height="40" rx="6" fill="url(#metallicBody)" transform="rotate(15 31 55)" />
-                  <rect x="83" y="55" width="12" height="40" rx="6" fill="url(#metallicBody)" transform="rotate(-15 89 55)" />
-                  <rect x="45" y="90" width="14" height="45" rx="7" fill="url(#metallicBody)" transform="rotate(5 52 90)" />
-                  <rect x="61" y="90" width="14" height="45" rx="7" fill="url(#metallicBody)" transform="rotate(-5 68 90)" />
-                </svg>
+            <div className="flex flex-col items-center justify-center mb-5">
+              <div className="h-44 w-full border-2 border-black bg-neutral-100 relative overflow-hidden shadow-inner">
+                <AvatarPreview3D
+                  color={color}
+                  name={name.trim() || 'YOU'}
+                  className="w-full h-full"
+                />
               </div>
             </div>
 

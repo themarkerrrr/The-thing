@@ -107,11 +107,10 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         {onZoomIn && (
           <button
             type="button"
-            onTouchStart={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault();
               onZoomIn();
             }}
-            onClick={onZoomIn}
             className="flex h-10 w-10 items-center justify-center rounded-full border border-black bg-transparent text-black font-comic font-bold text-lg leading-none"
             aria-label="Zoom In"
           >
@@ -121,11 +120,10 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         {onZoomOut && (
           <button
             type="button"
-            onTouchStart={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault();
               onZoomOut();
             }}
-            onClick={onZoomOut}
             className="flex h-10 w-10 items-center justify-center rounded-full border border-black bg-transparent text-black font-comic font-bold text-lg leading-none"
             aria-label="Zoom Out"
           >
@@ -142,11 +140,10 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             {onRotateBlock && (
               <button
                 type="button"
-                onTouchStart={(e) => {
+                onPointerDown={(e) => {
                   e.preventDefault();
                   onRotateBlock();
                 }}
-                onClick={onRotateBlock}
                 className="flex items-center gap-1 border border-black bg-transparent px-2.5 py-1.5 text-xs font-bold text-black font-comic"
               >
                 <RotateCw className="h-3.5 w-3.5" />
@@ -157,11 +154,10 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             {onPlaceBlock && (
               <button
                 type="button"
-                onTouchStart={(e) => {
+                onPointerDown={(e) => {
                   e.preventDefault();
                   onPlaceBlock();
                 }}
-                onClick={onPlaceBlock}
                 className="flex items-center gap-1 border border-black bg-transparent px-3 py-1.5 text-xs font-bold text-black font-comic"
               >
                 <PlusSquare className="h-3.5 w-3.5" />
@@ -179,13 +175,8 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             <button
               type="button"
               id="btn-touch-sprint"
-              onTouchStart={(e) => {
+              onPointerDown={(e) => {
                 e.preventDefault();
-                const next = !isSprinting;
-                setIsSprinting(next);
-                onSprintToggle(next);
-              }}
-              onClick={() => {
                 const next = !isSprinting;
                 setIsSprinting(next);
                 onSprintToggle(next);
@@ -204,11 +195,10 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           <button
             type="button"
             id="btn-touch-kick"
-            onTouchStart={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault();
               onKick();
             }}
-            onClick={onKick}
             className="flex h-13 w-13 items-center justify-center rounded-full border border-black bg-transparent text-black font-comic font-bold text-xs uppercase"
             aria-label="Kick"
           >
@@ -219,11 +209,10 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           <button
             type="button"
             id="btn-touch-jump"
-            onTouchStart={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault();
               onJump();
             }}
-            onClick={onJump}
             className="flex h-15 w-15 items-center justify-center rounded-full border border-black bg-transparent text-black font-comic font-bold"
             aria-label="Jump"
           >

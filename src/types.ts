@@ -41,6 +41,8 @@ export interface PhysicsObject {
   isStatic?: boolean;
 }
 
+export type ActiveTool = 'none' | 'build' | 'anchor' | 'unanchor' | 'delete' | 'scale';
+
 // Client -> Server messages
 export type ClientMessage =
   | { type: 'join'; name: string; color: string; roomId?: string; isPrivate?: boolean }
@@ -62,6 +64,24 @@ export type ClientMessage =
       position: [number, number, number];
       rotationY?: number;
       color?: string;
+      isStatic?: boolean;
+      scale?: number;
+      size?: [number, number, number];
+    }
+  | {
+      type: 'set_anchor';
+      objectId: string;
+      isStatic: boolean;
+    }
+  | {
+      type: 'scale_object';
+      objectId: string;
+      scale?: number;
+      size?: [number, number, number];
+    }
+  | {
+      type: 'delete_object';
+      objectId: string;
     }
   | {
       type: 'interact_object';
@@ -93,6 +113,7 @@ export type ServerMessage =
       serverTime: number;
     }
   | { type: 'object_spawned'; object: PhysicsObject }
+  | { type: 'object_updated'; object: PhysicsObject }
   | { type: 'object_removed'; id: string }
   | { type: 'objects_reset'; objects: PhysicsObject[] }
   | { type: 'chat_broadcast'; id: string; name: string; text: string }
